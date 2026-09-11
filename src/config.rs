@@ -64,10 +64,7 @@ pub fn load_config() -> Config {
     }
 
     match std::fs::read_to_string(&path) {
-        Ok(content) => match toml::from_str(&content) {
-            Ok(config) => config,
-            Err(_) => Config::default(),
-        },
+        Ok(content) => toml::from_str(&content).unwrap_or_default(),
         Err(_) => Config::default(),
     }
 }

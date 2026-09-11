@@ -50,7 +50,7 @@ impl SpotifyApi {
         std::io::stdin().read_line(&mut redirect_url)?;
 
         let code = client
-            .parse_response_code(&redirect_url.trim())
+            .parse_response_code(redirect_url.trim())
             .ok_or_else(|| anyhow::anyhow!("Failed to parse redirect URL"))?;
         client.request_token(&code).await?;
 

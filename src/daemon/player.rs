@@ -58,7 +58,7 @@ impl PlayerManager {
                 IPCResponse::Ok
             }
             IPCCommand::Seek(seconds) => {
-                if let Err(e) = self.api.seek(seconds as u32 * 1000).await {
+                if let Err(e) = self.api.seek(seconds * 1000).await {
                     error!("Seek failed: {}", e);
                     return IPCResponse::Error(e.to_string());
                 }

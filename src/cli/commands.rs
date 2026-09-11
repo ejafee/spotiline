@@ -173,7 +173,7 @@ async fn stop_daemon() -> Result<()> {
     #[cfg(windows)]
     {
         ProcessCommand::new("taskkill")
-            .args(&["/PID", &pid.to_string(), "/F"])
+            .args(["/PID", &pid.to_string(), "/F"])
             .output()?;
     }
 

@@ -1,12 +1,15 @@
 <div align="center">
 
+<img src="docs/assets/logo.png" alt="Spotiline Logo" width="128" height="128">
+
 # 🎵 Spotiline
 
 *Because graphical interfaces are overrated (-cli nerds)*
 
-[![Crates.io](https://img.shields.io/crates/v/spotiline?style=flat-square)](https://crates.io/crates/spotiline)
+[![Crates.io](https://img.shields.io/crates/v/spotiline?style=flat-square&logo=rust)](https://crates.io/crates/spotiline)
 [![Rust 1.70+](https://img.shields.io/badge/rust-1.70%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/ejafee/spotiline/ci.yml?branch=main&style=flat-square&logo=github)](https://github.com/ejafee/spotiline/actions)
 
 **The headless, native Spotify client engineered for terminal power users and autonomous AI agents.**
 

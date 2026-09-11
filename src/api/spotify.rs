@@ -23,7 +23,7 @@ impl SpotifyApi {
         scopes.insert("user-library-read".to_string());
 
         let oauth = OAuth {
-            redirect_uri: "http://localhost:8888/callback".to_string(),
+            redirect_uri: "http://127.0.0.1:8888/callback".to_string(),
             scopes,
             ..Default::default()
         };
@@ -53,7 +53,7 @@ impl SpotifyApi {
         println!("💡 If you don't have credentials yet:");
         println!("  → Visit: https://developer.spotify.com/dashboard");
         println!("  → Create a new app");
-        println!("  → Add redirect URI: http://localhost:8888/callback");
+        println!("  → Add redirect URI: http://127.0.0.1:8888/callback");
         println!("  → Copy your Client ID and Secret\n");
 
         // Perform OAuth flow

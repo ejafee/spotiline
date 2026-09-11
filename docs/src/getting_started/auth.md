@@ -8,7 +8,7 @@ Spotiline uses Spotify's OAuth 2.0 flow to authenticate with your account.
    - Visit [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
    - Create an app
    - Note your Client ID and Client Secret
-   - Add `http://localhost:8888/callback` as a redirect URI
+   - Add `http://127.0.0.1:8888/callback` as a redirect URI
 
 2. **Start the daemon:**
    ```bash

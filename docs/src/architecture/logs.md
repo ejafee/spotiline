@@ -28,7 +28,7 @@ spotiline daemon start
 ```
 
 ### "Failed to parse redirect URL"
-Ensure you paste the **full URL** from the browser after authorizing, including `http://localhost:8888/callback?code=...`
+Ensure you paste the **full URL** from the browser after authorizing, including `http://127.0.0.1:8888/callback?code=...`
 
 ### Network errors in logs
 Check internet connection. Spotiline requires active connection to Spotify servers.

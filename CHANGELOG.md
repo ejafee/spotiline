@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-11
+
+### Fixed
+- Changed OAuth redirect URI from `http://localhost:8888/callback` to `http://127.0.0.1:8888/callback` (Spotify requires IP address format)
+
+### Migration Note
+**For existing users (v1.1.0 or earlier):**
+
+If you already set up Spotiline, update your Spotify Developer Dashboard:
+
+1. Visit https://developer.spotify.com/dashboard
+2. Open your Spotiline app settings
+3. Update Redirect URI from `http://localhost:8888/callback` to `http://127.0.0.1:8888/callback`
+4. Save changes
+5. Re-authenticate:
+   ```bash
+   spotiline daemon stop
+   spotiline daemon start
+   ```
+
+**New users:** The setup wizard now shows the correct URI automatically.
+
 ## [1.1.0] - 2026-09-11
 
 ### Added

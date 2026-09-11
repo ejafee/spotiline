@@ -2,66 +2,70 @@ use super::{send_command, Commands, DaemonAction};
 use crate::daemon::state::IPCCommand;
 use anyhow::{anyhow, Result};
 use std::process::{Command as ProcessCommand, Stdio};
+use tracing::info;
 
 pub async fn execute(command: Commands, port: u16, json_mode: bool) -> Result<()> {
-    match command {
+    let res = match command {
         Commands::Daemon { action } => match action {
-            DaemonAction::Start => start_daemon(port).await?,
-            DaemonAction::Stop => stop_daemon().await?,
+            DaemonAction::Start => start_daemon(port).await,
+            DaemonAction::Stop => stop_daemon().await,
+            DaemonAction::Status => daemon_status(port).await,
         },
-        Commands::Play => {
-            let resp = send_command(port, IPCCommand::Play).await?;
-            print_response(resp, json_mode);
-        }
-        Commands::Pause => {
-            let resp = send_command(port, IPCCommand::Pause).await?;
-            print_response(resp, json_mode);
-        }
-        Commands::Next => {
-            let resp = send_command(port, IPCCommand::Next).await?;
-            print_response(resp, json_mode);
-        }
-        Commands::Prev => {
-            let resp = send_command(port, IPCCommand::Prev).await?;
-            print_response(resp, json_mode);
-        }
+        Commands::Play => send_and_print(port, IPCCommand::Play, json_mode).await,
+        Commands::Pause => send_and_print(port, IPCCommand::Pause, json_mode).await,
+        Commands::Next => send_and_print(port, IPCCommand::Next, json_mode).await,
+        Commands::Prev => send_and_print(port, IPCCommand::Prev, json_mode).await,
         Commands::Seek { seconds } => {
-            let resp = send_command(port, IPCCommand::Seek(seconds)).await?;
-            print_response(resp, json_mode);
+            send_and_print(port, IPCCommand::Seek(seconds), json_mode).await
         }
         Commands::Volume { level } => {
             if level > 100 {
                 return Err(anyhow!("Volume must be 0-100"));
             }
-            let resp = send_command(port, IPCCommand::Volume(level)).await?;
-            print_response(resp, json_mode);
+            send_and_print(port, IPCCommand::Volume(level), json_mode).await
         }
         Commands::Search {
             query,
             r#type,
             play,
         } => {
-            let resp = send_command(
+            send_and_print(
                 port,
                 IPCCommand::Search {
                     query,
                     search_type: r#type,
                     play,
                 },
+                json_mode,
             )
-            .await?;
-            print_response(resp, json_mode);
+            .await
         }
-        Commands::Queue { uri } => {
-            let resp = send_command(port, IPCCommand::Queue(uri)).await?;
-            print_response(resp, json_mode);
-        }
+        Commands::Queue { uri } => send_and_print(port, IPCCommand::Queue(uri), json_mode).await,
         Commands::Status { json } => {
-            let resp = send_command(port, IPCCommand::Status).await?;
-            print_response(resp, json || json_mode);
+            send_and_print(port, IPCCommand::Status, json || json_mode).await
+        }
+    };
+
+    res
+}
+
+async fn send_and_print(port: u16, cmd: IPCCommand, json_mode: bool) -> Result<()> {
+    match send_command(port, cmd).await {
+        Ok(resp) => {
+            print_response(resp, json_mode);
+            Ok(())
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            if err_str.contains("Connection refused") || err_str.contains("10061") {
+                Err(anyhow!(
+                    "Daemon not running. Start it with: spotiline daemon start"
+                ))
+            } else {
+                Err(e)
+            }
         }
     }
-    Ok(())
 }
 
 fn print_response(response: crate::daemon::state::IPCResponse, json_mode: bool) {
@@ -113,11 +117,53 @@ fn print_response(response: crate::daemon::state::IPCResponse, json_mode: bool) 
     }
 }
 
+async fn preflight_auth_check() -> Result<()> {
+    use crate::api::SpotifyApi;
+
+    println!("🔍 Checking authentication...");
+    let _api = SpotifyApi::new().await?;
+    println!("✓ Authentication complete");
+    Ok(())
+}
+
 async fn start_daemon(port: u16) -> Result<()> {
+    // Pre-flight authentication check (runs in foreground, shows prompts)
+    preflight_auth_check().await?;
+
     let pid_path = get_pid_path()?;
 
     if pid_path.exists() {
-        return Err(anyhow!("Daemon already running (PID file exists)"));
+        let pid_str = std::fs::read_to_string(&pid_path)?;
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            // Check if process actually running
+            #[cfg(windows)]
+            let running = ProcessCommand::new("tasklist")
+                .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+                .output()
+                .map(|o| !o.stdout.is_empty() && o.stdout.len() > 10)
+                .unwrap_or(false);
+
+            #[cfg(unix)]
+            let running = ProcessCommand::new("ps")
+                .args(["-p", &pid.to_string()])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            if running {
+                return Err(anyhow!(
+                    "Daemon already running (PID {}). Use 'spotiline daemon stop' to stop it.",
+                    pid
+                ));
+            } else {
+                // Stale PID file, remove it
+                let _ = std::fs::remove_file(&pid_path);
+                info!("Removed stale PID file");
+            }
+        } else {
+            // Invalid PID file, remove it
+            let _ = std::fs::remove_file(&pid_path);
+        }
     }
 
     let exe = std::env::current_exe()?;
@@ -164,7 +210,9 @@ async fn stop_daemon() -> Result<()> {
     let pid_path = get_pid_path()?;
 
     if !pid_path.exists() {
-        return Err(anyhow!("Daemon not running (no PID file)"));
+        println!("Daemon not running");
+        println!("Hint: Use 'spotiline daemon start' to start it");
+        return Ok(());
     }
 
     let pid_str = std::fs::read_to_string(&pid_path)?;
@@ -187,18 +235,92 @@ async fn stop_daemon() -> Result<()> {
     Ok(())
 }
 
-fn get_pid_path() -> Result<std::path::PathBuf> {
-    let state_dir = if cfg!(target_os = "windows") {
+async fn daemon_status(port: u16) -> Result<()> {
+    let pid_path = get_pid_path()?;
+
+    if !pid_path.exists() {
+        println!("Status: Not running (no PID file)");
+        return Ok(());
+    }
+
+    let pid_str = std::fs::read_to_string(&pid_path)?;
+    let pid: u32 = pid_str.trim().parse()?;
+
+    // Check if process running
+    #[cfg(windows)]
+    let running = ProcessCommand::new("tasklist")
+        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+        .output()
+        .map(|o| !o.stdout.is_empty() && o.stdout.len() > 10)
+        .unwrap_or(false);
+
+    #[cfg(unix)]
+    let running = ProcessCommand::new("ps")
+        .args(["-p", &pid.to_string()])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !running {
+        println!("Status: Dead (PID file exists but process not found)");
+        println!("Hint: Run 'spotiline daemon start' to restart");
+        return Ok(());
+    }
+
+    // Try to connect
+    match send_command(port, IPCCommand::Status).await {
+        Ok(_) => {
+            println!("Status: Running (PID {})", pid);
+            println!("Port: {}", port);
+
+            // Show log location
+            if let Ok(log_dir) = get_log_dir() {
+                println!("Logs: {}", log_dir.join("spotiline.log").display());
+            }
+        }
+        Err(_) => {
+            println!("Status: Process running but not responding (PID {})", pid);
+            println!(
+                "Hint: May still be initializing, or try 'spotiline daemon stop' then restart"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn get_log_dir() -> Result<std::path::PathBuf> {
+    let log_dir = if cfg!(target_os = "windows") {
         dirs::data_local_dir()
-            .ok_or_else(|| anyhow!("Cannot find local data dir"))?
+            .ok_or_else(|| anyhow::anyhow!("Cannot find local data dir"))?
             .join("spotiline")
+            .join("logs")
     } else if cfg!(target_os = "macos") {
-        dirs::data_dir()
-            .ok_or_else(|| anyhow!("Cannot find data dir"))?
+        dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Cannot find home dir"))?
+            .join("Library")
+            .join("Logs")
             .join("spotiline")
     } else {
         dirs::data_local_dir()
-            .ok_or_else(|| anyhow!("Cannot find local data dir"))?
+            .ok_or_else(|| anyhow::anyhow!("Cannot find local data dir"))?
+            .join("spotiline")
+    };
+    Ok(log_dir)
+}
+
+fn get_pid_path() -> Result<std::path::PathBuf> {
+    let state_dir = if cfg!(target_os = "windows") {
+        dirs::data_local_dir()
+            .ok_or_else(|| anyhow::anyhow!("Cannot find local data dir"))?
+            .join("spotiline")
+    } else if cfg!(target_os = "macos") {
+        dirs::data_dir()
+            .ok_or_else(|| anyhow::anyhow!("Cannot find data dir"))?
+            .join("spotiline")
+    } else {
+        dirs::data_local_dir()
+            .ok_or_else(|| anyhow::anyhow!("Cannot find local data dir"))?
             .join("spotiline")
     };
 

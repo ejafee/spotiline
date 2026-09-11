@@ -41,6 +41,21 @@ impl SpotifyApi {
             }
         }
 
+        println!("\n╔════════════════════════════════════════════════════════╗");
+        println!("║         Welcome to Spotiline! 🎵                        ║");
+        println!("║  First-time setup: Let's connect to Spotify            ║");
+        println!("╚════════════════════════════════════════════════════════╝\n");
+
+        println!("📋 Prerequisites:");
+        println!("  1. Spotify Premium account");
+        println!("  2. Spotify Developer credentials\n");
+
+        println!("💡 If you don't have credentials yet:");
+        println!("  → Visit: https://developer.spotify.com/dashboard");
+        println!("  → Create a new app");
+        println!("  → Add redirect URI: http://localhost:8888/callback");
+        println!("  → Copy your Client ID and Secret\n");
+
         // Perform OAuth flow
         let auth_url = client.get_authorize_url(false)?;
         println!("\n==> Open this URL in your browser:\n{}\n", auth_url);
@@ -62,6 +77,8 @@ impl SpotifyApi {
             }
             info!("Saved token to keyring");
         }
+
+        println!("\n✓ Setup complete! Starting daemon...\n");
 
         Ok(Self { client })
     }

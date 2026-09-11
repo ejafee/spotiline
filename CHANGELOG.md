@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-11
+
+### Added
+- `spotiline daemon status` command to check daemon health
+- `spotiline --version` flag support
+- Interactive setup wizard and pre-flight auth check for first-time users
+- Stale PID file auto-cleanup when daemon process is dead
+
+### Fixed
+- OAuth prompts no longer hidden during `daemon start` (authentication now completes in foreground before daemon detaches)
+- Better error messages with actionable hints when daemon is not running
+
 ## [1.0.0] - 2026-09-11
 
 ### Added

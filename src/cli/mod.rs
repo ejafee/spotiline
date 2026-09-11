@@ -8,6 +8,7 @@ use tokio::net::TcpStream;
 
 #[derive(Parser)]
 #[command(name = "spotiline")]
+#[command(version)]
 #[command(about = "Headless Spotify client for terminal users and AI agents", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
@@ -56,6 +57,8 @@ pub enum DaemonAction {
     Start,
     /// Stop the background daemon
     Stop,
+    /// Check daemon status
+    Status,
 }
 
 pub async fn send_command(port: u16, command: IPCCommand) -> Result<IPCResponse> {

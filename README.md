@@ -138,7 +138,7 @@ spotiline binary
 
 Contributions welcome! See [CONTRIBUTING.md](https://ejafee.github.io/spotiline/contributing.html) for guidelines.
 
-### Roadmap (v1.1+)
+### Roadmap (v1.3+)
 - Synced lyrics integration (lrclib.net)
 - Podcast support
 - Real-time FFT audio visualizer

@@ -13,9 +13,10 @@ Graphical interfaces consume system resources and can't be easily scripted or co
 
 ## Requirements
 
-- Spotify Premium account (required by underlying audio libraries)
+- Spotify Premium account (required for playback control via Spotify Web API)
 - Active internet connection
-- Rust 1.70+ (for building from source)
+- At least one active Spotify device (official app, mobile, or speaker)
+- Rust 1.70+ (for building from source or installing via cargo)
 
 ## Quick Links
 

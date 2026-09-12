@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-12
+
+### Fixed
+- **Critical Performance Fix:** TUI input lag reduced from 700ms to <50ms
+  - Refactored event loop to use non-blocking background status polling
+  - Status updates now run in separate task (1 second interval)
+  - Keyboard input no longer blocked by IPC calls to daemon
+
+### Changed
+- Improved README clarity for new users:
+  - Added explicit Rust installation requirement
+  - Added step-by-step Spotify Developer credential setup
+  - Removed excessive emoji usage for professional tone
+  - Clarified authentication flow and credential storage
+- Updated documentation (`intro.md`, `installation.md`) with Rust prerequisites
+
+### Technical Details
+- TUI event polling reduced from 100ms to 50ms for snappier response
+- Background task updates playback state every 1 second via tokio channel
+- Main event loop no longer blocks on IPC status queries
+
 ## [1.1.4] - 2026-09-12
 
 ### Added
@@ -112,3 +133,4 @@ If you already set up Spotiline, update your Spotify Developer Dashboard:
 [1.0.0]: https://github.com/ejafee/spotiline/releases/tag/v1.0.0
 [1.1.1]: https://github.com/ejafee/spotiline/releases/tag/v1.1.1
 [1.1.2]: https://github.com/ejafee/spotiline/releases/tag/v1.1.2
+[1.2.0]: https://github.com/ejafee/spotiline/releases/tag/v1.2.0

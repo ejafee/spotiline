@@ -26,7 +26,7 @@ pub enum FocusPane {
 }
 
 pub struct App {
-    port: u16,
+    pub port: u16,
     pub input_mode: InputMode,
     pub focus: FocusPane,
     pub playlists: Vec<String>,
@@ -69,12 +69,16 @@ impl App {
 
     pub async fn tick(&mut self) {
         if let Ok(IPCResponse::State(state)) = send_command(self.port, IPCCommand::Status).await {
-            self.is_playing = state.state == "playing";
-            self.current_track = state.track;
-            self.current_artist = state.artist;
-            self.progress_ms = state.progress_ms;
-            self.duration_ms = state.duration_ms;
+            self.apply_state(state);
         }
+    }
+
+    pub fn apply_state(&mut self, state: crate::daemon::state::PlaybackState) {
+        self.is_playing = state.state == "playing";
+        self.current_track = state.track;
+        self.current_artist = state.artist;
+        self.progress_ms = state.progress_ms;
+        self.duration_ms = state.duration_ms;
     }
 
     pub async fn toggle_play_pause(&mut self) {

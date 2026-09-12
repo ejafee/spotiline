@@ -2,9 +2,9 @@
 
 <img src="docs/assets/logo.png" alt="Spotiline Logo" width="128" height="128">
 
-# 🎵 Spotiline
+# Spotiline
 
-*Because graphical interfaces are overrated (-cli nerds)*
+*Because graphical interfaces are overrated*
 
 [![Crates.io](https://img.shields.io/crates/v/spotiline?style=flat-square&logo=rust)](https://crates.io/crates/spotiline)
 [![Rust 1.70+](https://img.shields.io/badge/rust-1.70%2B-orange?style=flat-square)](https://www.rust-lang.org)
@@ -13,21 +13,21 @@
 
 **The headless, native Spotify client engineered for terminal power users and autonomous AI agents.**
 
-[Installation](#-quick-start) • [Documentation](https://ejafee.github.io/spotiline) • [Contributing](#-contributing)
+[Installation](#quick-start) • [Documentation](https://ejafee.github.io/spotiline) • [Contributing](#contributing)
 
 </div>
 
 ---
 
-## ✨ Features
+## Features
 
-### 🧑‍💻 Human Mode (TUI)
+### Human Mode (TUI)
 - 24-bit color dashboard with real-time status
 - Keyboard-driven navigation (no mouse needed)
 - Live search with instant results
 - <50MB RAM idle, <100ms launch time
 
-### 🤖 Agent Mode (CLI)
+### Agent Mode (CLI)
 - Stateless commands for scripting
 - `--json` flag for clean, machine-readable output
 - Perfect for AI agents and shell automation
@@ -35,19 +35,45 @@
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
-### Install
+### Prerequisites
+
+1. **Install Rust** (if not already installed):
+   ```bash
+   # Linux / macOS
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+   # Windows
+   # Download from https://rustup.rs or use: winget install Rustlang.Rustup
+   ```
+
+2. **Get Spotify Developer Credentials:**
+   - Visit [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+   - Click "Create app"
+   - Fill in app name and description (any values)
+   - Add Redirect URI: `http://127.0.0.1:8888/callback`
+   - Save and copy your **Client ID** and **Client Secret**
+
+### Installation
 
 ```bash
 cargo install spotiline
 ```
 
-### Start the Engine
+### First-Time Setup
 
 ```bash
 spotiline daemon start
 ```
+
+You will be prompted for:
+- Spotify Client ID (paste from dashboard)
+- Spotify Client Secret (paste from dashboard)
+
+Your browser opens automatically for authorization. Click "Agree" and you're done.
+
+Credentials are stored securely in your system keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service).
 
 ### Launch the UI
 
@@ -65,7 +91,7 @@ spotiline search "lofi beats" --play
 
 ---
 
-## 📖 Documentation
+## Documentation
 
 Full documentation available at: **[https://ejafee.github.io/spotiline](https://ejafee.github.io/spotiline)**
 
@@ -77,15 +103,23 @@ Full documentation available at: **[https://ejafee.github.io/spotiline](https://
 
 ---
 
-## ⚠️ Requirements
+## Requirements
 
+### System Requirements
+- **Rust 1.70+** (for installation via cargo or building from source)
+- Operating System: Linux, macOS, or Windows
+
+### Spotify Requirements
 - **Spotify Premium** account (required for playback control via Spotify Web API)
+- **Spotify Developer credentials** (Client ID and Client Secret)
+  - Create free app at: https://developer.spotify.com/dashboard
+  - Set redirect URI: `http://127.0.0.1:8888/callback`
 - Active internet connection
-- At least one active Spotify device (official app or speaker)
+- At least one active Spotify device (desktop app, mobile, or speaker)
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 spotiline binary
@@ -100,7 +134,7 @@ spotiline binary
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions welcome! See [CONTRIBUTING.md](https://ejafee.github.io/spotiline/contributing.html) for guidelines.
 
@@ -112,13 +146,13 @@ Contributions welcome! See [CONTRIBUTING.md](https://ejafee.github.io/spotiline/
 
 ---
 
-## 📝 License
+## License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 Built with:
 - [rspotify](https://github.com/ramsayleung/rspotify) - Spotify Web API client

@@ -72,18 +72,46 @@ async fn run_app<B: ratatui::backend::Backend>(
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
-    loop {
-        terminal.draw(|f| ui::render(f, app))?;
+    let (status_tx, mut status_rx) = tokio::sync::mpsc::channel(1);
+    let port = app.port;
 
-        if event::poll(Duration::from_millis(100))? {
-            if let CEvent::Key(key) = event::read()? {
-                if events::handle_key_event(app, key).await? {
+    let status_task = tokio::spawn(async move {
+        loop {
+            if let Ok(state) = fetch_player_state(port).await {
+                if status_tx.send(state).await.is_err() {
                     break;
                 }
             }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
+
+    let result = loop {
+        while let Ok(state) = status_rx.try_recv() {
+            app.apply_state(state);
         }
 
-        app.tick().await;
+        terminal.draw(|f| ui::render(f, app))?;
+
+        if event::poll(Duration::from_millis(50))? {
+            if let CEvent::Key(key) = event::read()? {
+                if events::handle_key_event(app, key).await? {
+                    break Ok(());
+                }
+            }
+        }
+    };
+
+    status_task.abort();
+    result
+}
+
+async fn fetch_player_state(port: u16) -> Result<crate::daemon::state::PlaybackState> {
+    use crate::cli::send_command;
+    use crate::daemon::state::{IPCCommand, IPCResponse};
+
+    match send_command(port, IPCCommand::Status).await {
+        Ok(IPCResponse::State(state)) => Ok(state),
+        _ => Err(anyhow::anyhow!("Status fetch failed")),
     }
-    Ok(())
 }

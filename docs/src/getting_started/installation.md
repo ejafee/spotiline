@@ -1,5 +1,26 @@
 # Installation
 
+## Prerequisites
+
+Spotiline is written in Rust. You need Rust 1.70 or later installed.
+
+### Install Rust
+
+**Linux / macOS:**
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+**Windows:**
+- Download from [rustup.rs](https://rustup.rs)
+- Or use winget: `winget install Rustlang.Rustup`
+
+**Verify installation:**
+```bash
+rustc --version
+cargo --version
+```
+
 ## Via Cargo (Recommended)
 
 ```bash

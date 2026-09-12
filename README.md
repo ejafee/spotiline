@@ -4,7 +4,7 @@
 
 # Spotiline
 
-*Because graphical interfaces are overrated*
+*cuz graphical interfaces are overrated (somebody)*
 
 [![Crates.io](https://img.shields.io/crates/v/spotiline?style=flat-square&logo=rust)](https://crates.io/crates/spotiline)
 [![Rust 1.70+](https://img.shields.io/badge/rust-1.70%2B-orange?style=flat-square)](https://www.rust-lang.org)

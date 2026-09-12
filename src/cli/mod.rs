@@ -59,6 +59,8 @@ pub enum DaemonAction {
     Stop,
     /// Check daemon status
     Status,
+    /// Check authentication and keyring status
+    Diagnose,
 }
 
 pub async fn send_command(port: u16, command: IPCCommand) -> Result<IPCResponse> {

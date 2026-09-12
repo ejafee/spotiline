@@ -10,6 +10,7 @@ pub async fn execute(command: Commands, port: u16, json_mode: bool) -> Result<()
             DaemonAction::Start => start_daemon(port).await,
             DaemonAction::Stop => stop_daemon().await,
             DaemonAction::Status => daemon_status(port).await,
+            DaemonAction::Diagnose => daemon_diagnose(port).await,
         },
         Commands::Play => send_and_print(port, IPCCommand::Play, json_mode).await,
         Commands::Pause => send_and_print(port, IPCCommand::Pause, json_mode).await,
@@ -203,6 +204,29 @@ async fn start_daemon(port: u16) -> Result<()> {
     }
 
     println!("Daemon started");
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    match send_command(port, IPCCommand::Status).await {
+        Ok(_) => {
+            println!("✓ Daemon is responding");
+        }
+        Err(e) => {
+            let pid_str = std::fs::read_to_string(&pid_path).unwrap_or_default();
+            let pid: u32 = pid_str.trim().parse().unwrap_or(0);
+            println!("⚠️  Warning: Daemon may have crashed during initialization");
+            println!("   Error: {}", e);
+            println!(
+                "   Hint: Run 'spotiline daemon status' for details or check logs in {:?}",
+                get_log_dir().unwrap_or_default()
+            );
+            if pid != 0 {
+                let _ = std::fs::remove_file(&pid_path);
+                println!("   Removed stale PID file ({})", pid);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -286,6 +310,57 @@ async fn daemon_status(port: u16) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn daemon_diagnose(port: u16) -> Result<()> {
+    println!("=== Spotiline Diagnostic Report ===\n");
+
+    println!("1. Checking credentials in keyring...");
+    for key in ["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"] {
+        match keyring::Entry::new("spotiline", key) {
+            Ok(entry) => match entry.get_password() {
+                Ok(val) if !val.is_empty() => {
+                    println!("   ✓ {} found (length: {})", key, val.len());
+                }
+                Ok(_) => {
+                    println!("   ✗ {} is empty", key);
+                }
+                Err(e) => {
+                    println!("   ✗ {} not found: {}", key, e);
+                }
+            },
+            Err(e) => {
+                println!("   ✗ Cannot access keyring for {}: {}", key, e);
+            }
+        }
+    }
+
+    println!("\n2. Checking authentication token...");
+    match keyring::Entry::new("spotiline", "spotify_token") {
+        Ok(entry) => match entry.get_password() {
+            Ok(token_str) if !token_str.is_empty() => {
+                println!("   ✓ Token found (length: {})", token_str.len());
+                if token_str.len() > 2048 {
+                    println!("   ⚠️  Token is very large (>2KB), may exceed manager limits");
+                }
+            }
+            Ok(_) => {
+                println!("   ✗ Token is empty");
+            }
+            Err(e) => {
+                println!("   ✗ Token not found: {}", e);
+            }
+        },
+        Err(e) => {
+            println!("   ✗ Cannot access keyring: {}", e);
+        }
+    }
+
+    println!("\n3. Checking daemon status...");
+    daemon_status(port).await?;
+
+    println!("\n=== End of Diagnostic Report ===");
     Ok(())
 }
 

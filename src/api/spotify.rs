@@ -194,18 +194,118 @@ impl SpotifyApi {
             }
         }
 
-        // Save token to keyring
+        // Save token to keyring (with explicit error handling)
         if let Some(token) = client.token.lock().await.unwrap().as_ref() {
             let token_str = serde_json::to_string(&token)?;
-            if let Ok(entry) = keyring::Entry::new("spotiline", "spotify_token") {
-                let _ = entry.set_password(&token_str);
+
+            let keyring_result = keyring::Entry::new("spotiline", "spotify_token")
+                .and_then(|entry| entry.set_password(&token_str));
+
+            match keyring_result {
+                Ok(_) => {
+                    info!("Saved token to keyring");
+
+                    // Verify token was actually saved
+                    match keyring::Entry::new("spotiline", "spotify_token")
+                        .and_then(|entry| entry.get_password())
+                    {
+                        Ok(saved) if !saved.is_empty() => {
+                            println!("✓ Token saved and verified in system keychain");
+                        }
+                        Ok(_) => {
+                            return Err(anyhow::anyhow!(
+                                "Token verification failed: saved token is empty.\n\
+                                 Daemon will not be able to authenticate."
+                            ));
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Token verification failed: could not read back token: {}\n\
+                                 Daemon will not be able to authenticate.",
+                                e
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to save token to system keychain: {}\n\
+                         This is required for daemon to work. Possible causes:\n\
+                         - System keyring service unavailable\n\
+                         - Credential Manager permissions\n\
+                         - Token too large for manager\n\
+                         Check keyring logs or run with admin privileges.",
+                        e
+                    ));
+                }
             }
-            info!("Saved token to keyring");
         }
 
         println!("\n✓ Setup complete! Starting daemon...\n");
 
         Ok(Self { client })
+    }
+
+    pub async fn new_daemon_mode() -> Result<Self> {
+        let (client, _) = Self::from_keyring_or_fail()?;
+
+        if let Ok(entry) = keyring::Entry::new("spotiline", "spotify_token") {
+            if let Ok(token_str) = entry.get_password() {
+                if let Ok(token) = serde_json::from_str::<rspotify::Token>(&token_str) {
+                    *client.token.lock().await.unwrap() = Some(token);
+                    info!("Loaded token from keyring (daemon mode)");
+                    return Ok(Self { client });
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "No authentication token found in system keychain.\n\
+             Run 'spotiline daemon start' to authenticate."
+        ))
+    }
+
+    fn from_keyring_or_fail() -> Result<(AuthCodeSpotify, ())> {
+        let client_id = Self::get_credential_or_fail("SPOTIFY_CLIENT_ID")?;
+        let client_secret = Self::get_credential_or_fail("SPOTIFY_CLIENT_SECRET")?;
+
+        let creds = Credentials::new(&client_id, &client_secret);
+
+        let mut scopes = HashSet::new();
+        scopes.insert("user-read-playback-state".to_string());
+        scopes.insert("user-modify-playback-state".to_string());
+        scopes.insert("user-read-currently-playing".to_string());
+        scopes.insert("playlist-read-private".to_string());
+        scopes.insert("user-library-read".to_string());
+
+        let oauth = OAuth {
+            redirect_uri: "http://127.0.0.1:8888/callback".to_string(),
+            scopes,
+            ..Default::default()
+        };
+
+        Ok((AuthCodeSpotify::new(creds, oauth), ()))
+    }
+
+    fn get_credential_or_fail(env_var: &str) -> Result<String> {
+        if let Ok(val) = std::env::var(env_var) {
+            if !val.trim().is_empty() {
+                return Ok(val.trim().to_string());
+            }
+        }
+
+        if let Ok(entry) = keyring::Entry::new("spotiline", env_var) {
+            if let Ok(val) = entry.get_password() {
+                if !val.trim().is_empty() {
+                    return Ok(val.trim().to_string());
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Credential {} not found. Run 'spotiline daemon start' to authenticate.",
+            env_var
+        ))
     }
 
     fn get_or_prompt_credential(env_var: &str, prompt: &str) -> Result<String> {
@@ -225,9 +325,18 @@ impl SpotifyApi {
         std::io::stdin().read_line(&mut input)?;
         let input = input.trim().to_string();
 
-        // Save to keyring
-        if let Ok(entry) = keyring::Entry::new("spotiline", env_var) {
-            let _ = entry.set_password(&input);
+        // Save to keyring with error reporting
+        match keyring::Entry::new("spotiline", env_var) {
+            Ok(entry) => {
+                if let Err(e) = entry.set_password(&input) {
+                    println!("⚠️  Warning: Could not save {} to keychain: {}", prompt, e);
+                    println!("   You will need to enter it again next time.");
+                }
+            }
+            Err(e) => {
+                println!("⚠️  Warning: Could not access system keychain: {}", e);
+                println!("   You will need to enter it again next time.");
+            }
         }
 
         Ok(input)

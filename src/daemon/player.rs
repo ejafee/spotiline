@@ -13,7 +13,7 @@ pub struct PlayerManager {
 
 impl PlayerManager {
     pub async fn new() -> Result<Self> {
-        let api = Arc::new(SpotifyApi::new().await?);
+        let api = Arc::new(SpotifyApi::new_daemon_mode().await?);
         let state = Arc::new(Mutex::new(PlaybackState::default()));
 
         Ok(Self { state, api })

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-09-12
+
+### Added
+- `spotiline daemon diagnose` command to troubleshoot credentials, keyring storage, and daemon health
+- Explicit error reporting and verification for system keychain token saves (preventing silent credential loss)
+- Daemon-safe API initialization (`new_daemon_mode`) preventing background hangs when tokens are missing
+
+### Fixed
+- Fixed critical bug where tokens were silently failing to save to Windows Credential Manager / system keyring
+- Fixed daemon hanging silently on startup when unauthenticated
+
 ## [1.1.2] - 2026-09-12
 
 ### Added

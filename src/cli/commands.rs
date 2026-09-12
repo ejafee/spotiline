@@ -316,45 +316,67 @@ async fn daemon_status(port: u16) -> Result<()> {
 async fn daemon_diagnose(port: u16) -> Result<()> {
     println!("=== Spotiline Diagnostic Report ===\n");
 
-    println!("1. Checking credentials in keyring...");
+    println!("1. Checking credentials in storage...");
+    let file_creds = crate::config::load_credentials();
+
     for key in ["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"] {
-        match keyring::Entry::new("spotiline", key) {
-            Ok(entry) => match entry.get_password() {
-                Ok(val) if !val.is_empty() => {
-                    println!("   ✓ {} found (length: {})", key, val.len());
+        let mut found = false;
+
+        // Check keyring
+        if let Ok(entry) = keyring::Entry::new("spotiline", key) {
+            if let Ok(val) = entry.get_password() {
+                if !val.is_empty() {
+                    println!("   ✓ {} found in Keyring (length: {})", key, val.len());
+                    found = true;
                 }
-                Ok(_) => {
-                    println!("   ✗ {} is empty", key);
-                }
-                Err(e) => {
-                    println!("   ✗ {} not found: {}", key, e);
-                }
-            },
-            Err(e) => {
-                println!("   ✗ Cannot access keyring for {}: {}", key, e);
             }
+        }
+
+        // Check file fallback
+        let file_val = if key == "SPOTIFY_CLIENT_ID" {
+            file_creds.client_id.clone()
+        } else {
+            file_creds.client_secret.clone()
+        };
+
+        if let Some(val) = file_val {
+            if !val.is_empty() {
+                println!("   ✓ {} found in Config File (length: {})", key, val.len());
+                found = true;
+            }
+        }
+
+        if !found {
+            println!("   ✗ {} not found in Keyring or Config File", key);
         }
     }
 
     println!("\n2. Checking authentication token...");
-    match keyring::Entry::new("spotiline", "spotify_token") {
-        Ok(entry) => match entry.get_password() {
-            Ok(token_str) if !token_str.is_empty() => {
-                println!("   ✓ Token found (length: {})", token_str.len());
-                if token_str.len() > 2048 {
-                    println!("   ⚠️  Token is very large (>2KB), may exceed manager limits");
-                }
+    let mut token_found = false;
+
+    // Check keyring
+    if let Ok(entry) = keyring::Entry::new("spotiline", "spotify_token") {
+        if let Ok(token_str) = entry.get_password() {
+            if !token_str.is_empty() {
+                println!("   ✓ Token found in Keyring (length: {})", token_str.len());
+                token_found = true;
             }
-            Ok(_) => {
-                println!("   ✗ Token is empty");
-            }
-            Err(e) => {
-                println!("   ✗ Token not found: {}", e);
-            }
-        },
-        Err(e) => {
-            println!("   ✗ Cannot access keyring: {}", e);
         }
+    }
+
+    // Check config file fallback
+    if let Some(token_str) = crate::config::load_token_from_config() {
+        if !token_str.is_empty() {
+            println!(
+                "   ✓ Token found in Config File (length: {})",
+                token_str.len()
+            );
+            token_found = true;
+        }
+    }
+
+    if !token_found {
+        println!("   ✗ Token not found in Keyring or Config File");
     }
 
     println!("\n3. Checking daemon status...");

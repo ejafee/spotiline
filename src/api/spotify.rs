@@ -136,14 +136,19 @@ impl SpotifyApi {
 
         let client = AuthCodeSpotify::new(creds, oauth);
 
-        // Try to load token from keyring
-        if let Ok(entry) = keyring::Entry::new("spotiline", "spotify_token") {
-            if let Ok(token_str) = entry.get_password() {
-                if let Ok(token) = serde_json::from_str(&token_str) {
-                    *client.token.lock().await.unwrap() = Some(token);
-                    info!("Loaded token from keyring");
-                    return Ok(Self { client });
-                }
+        // Try to load token from keyring or config fallback
+        let token_str_opt = if let Ok(entry) = keyring::Entry::new("spotiline", "spotify_token") {
+            entry.get_password().ok()
+        } else {
+            None
+        }
+        .or_else(crate::config::load_token_from_config);
+
+        if let Some(token_str) = token_str_opt {
+            if let Ok(token) = serde_json::from_str(&token_str) {
+                *client.token.lock().await.unwrap() = Some(token);
+                info!("Loaded token from storage");
+                return Ok(Self { client });
             }
         }
 
@@ -194,50 +199,32 @@ impl SpotifyApi {
             }
         }
 
-        // Save token to keyring (with explicit error handling)
+        // Save token to keyring and file fallback
         if let Some(token) = client.token.lock().await.unwrap().as_ref() {
             let token_str = serde_json::to_string(&token)?;
 
-            let keyring_result = keyring::Entry::new("spotiline", "spotify_token")
-                .and_then(|entry| entry.set_password(&token_str));
-
-            match keyring_result {
-                Ok(_) => {
-                    info!("Saved token to keyring");
-
-                    // Verify token was actually saved
-                    match keyring::Entry::new("spotiline", "spotify_token")
-                        .and_then(|entry| entry.get_password())
-                    {
-                        Ok(saved) if !saved.is_empty() => {
-                            println!("✓ Token saved and verified in system keychain");
-                        }
-                        Ok(_) => {
-                            return Err(anyhow::anyhow!(
-                                "Token verification failed: saved token is empty.\n\
-                                 Daemon will not be able to authenticate."
-                            ));
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!(
-                                "Token verification failed: could not read back token: {}\n\
-                                 Daemon will not be able to authenticate.",
-                                e
-                            ));
-                        }
-                    }
+            // 1. Try keyring
+            let mut keyring_saved = false;
+            if let Ok(entry) = keyring::Entry::new("spotiline", "spotify_token") {
+                if entry.set_password(&token_str).is_ok() {
+                    keyring_saved = true;
                 }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to save token to system keychain: {}\n\
-                         This is required for daemon to work. Possible causes:\n\
-                         - System keyring service unavailable\n\
-                         - Credential Manager permissions\n\
-                         - Token too large for manager\n\
-                         Check keyring logs or run with admin privileges.",
-                        e
-                    ));
-                }
+            }
+
+            // 2. Always write to config/fallback file as well
+            let config_saved = crate::config::save_token_to_config(&token_str).is_ok();
+
+            if keyring_saved || config_saved {
+                info!(
+                    "Saved token to storage (keyring={}, file={})",
+                    keyring_saved, config_saved
+                );
+                println!("✓ Token saved successfully");
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Failed to save token to both system keychain and config file.\n\
+                     Please check file permissions for config directory."
+                ));
             }
         }
 
@@ -249,18 +236,23 @@ impl SpotifyApi {
     pub async fn new_daemon_mode() -> Result<Self> {
         let (client, _) = Self::from_keyring_or_fail()?;
 
-        if let Ok(entry) = keyring::Entry::new("spotiline", "spotify_token") {
-            if let Ok(token_str) = entry.get_password() {
-                if let Ok(token) = serde_json::from_str::<rspotify::Token>(&token_str) {
-                    *client.token.lock().await.unwrap() = Some(token);
-                    info!("Loaded token from keyring (daemon mode)");
-                    return Ok(Self { client });
-                }
+        let token_str_opt = if let Ok(entry) = keyring::Entry::new("spotiline", "spotify_token") {
+            entry.get_password().ok()
+        } else {
+            None
+        }
+        .or_else(crate::config::load_token_from_config);
+
+        if let Some(token_str) = token_str_opt {
+            if let Ok(token) = serde_json::from_str::<rspotify::Token>(&token_str) {
+                *client.token.lock().await.unwrap() = Some(token);
+                info!("Loaded token from storage (daemon mode)");
+                return Ok(Self { client });
             }
         }
 
         Err(anyhow::anyhow!(
-            "No authentication token found in system keychain.\n\
+            "No authentication token found in storage.\n\
              Run 'spotiline daemon start' to authenticate."
         ))
     }
@@ -302,6 +294,18 @@ impl SpotifyApi {
             }
         }
 
+        let creds = crate::config::load_credentials();
+        let val = if env_var == "SPOTIFY_CLIENT_ID" {
+            creds.client_id
+        } else {
+            creds.client_secret
+        };
+        if let Some(v) = val {
+            if !v.trim().is_empty() {
+                return Ok(v.trim().to_string());
+            }
+        }
+
         Err(anyhow::anyhow!(
             "Credential {} not found. Run 'spotiline daemon start' to authenticate.",
             env_var
@@ -313,10 +317,24 @@ impl SpotifyApi {
             return Ok(val);
         }
 
-        // Try keyring first
         if let Ok(entry) = keyring::Entry::new("spotiline", env_var) {
             if let Ok(val) = entry.get_password() {
-                return Ok(val);
+                if !val.is_empty() {
+                    return Ok(val);
+                }
+            }
+        }
+
+        let creds = crate::config::load_credentials();
+        if env_var == "SPOTIFY_CLIENT_ID" {
+            if let Some(v) = creds.client_id {
+                if !v.is_empty() {
+                    return Ok(v);
+                }
+            }
+        } else if let Some(v) = creds.client_secret {
+            if !v.is_empty() {
+                return Ok(v);
             }
         }
 
@@ -325,18 +343,25 @@ impl SpotifyApi {
         std::io::stdin().read_line(&mut input)?;
         let input = input.trim().to_string();
 
-        // Save to keyring with error reporting
-        match keyring::Entry::new("spotiline", env_var) {
-            Ok(entry) => {
-                if let Err(e) = entry.set_password(&input) {
-                    println!("⚠️  Warning: Could not save {} to keychain: {}", prompt, e);
-                    println!("   You will need to enter it again next time.");
-                }
+        let mut keyring_saved = false;
+        if let Ok(entry) = keyring::Entry::new("spotiline", env_var) {
+            if entry.set_password(&input).is_ok() {
+                keyring_saved = true;
             }
-            Err(e) => {
-                println!("⚠️  Warning: Could not access system keychain: {}", e);
-                println!("   You will need to enter it again next time.");
-            }
+        }
+
+        let mut config_creds = crate::config::load_credentials();
+        if env_var == "SPOTIFY_CLIENT_ID" {
+            config_creds.client_id = Some(input.clone());
+        } else {
+            config_creds.client_secret = Some(input.clone());
+        }
+        let config_saved = crate::config::save_credentials(&config_creds).is_ok();
+
+        if keyring_saved || config_saved {
+            println!("✓ {} saved", prompt);
+        } else {
+            println!("⚠️  Warning: Could not save {} to storage.", prompt);
         }
 
         Ok(input)

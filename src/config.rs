@@ -1,3 +1,4 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -11,6 +12,16 @@ pub struct Config {
     pub audio_backend: String,
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default)]
+    pub credentials: CredentialsConfig,
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CredentialsConfig {
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +38,8 @@ impl Default for Config {
             port: DEFAULT_PORT,
             audio_backend: "auto".to_string(),
             ui: UiConfig::default(),
+            credentials: CredentialsConfig::default(),
+            token: None,
         }
     }
 }
@@ -79,4 +92,54 @@ fn get_config_path() -> PathBuf {
             .map(|p| p.join("spotiline").join("config.toml"))
             .unwrap_or_else(|| PathBuf::from("~/.config/spotiline/config.toml"))
     }
+}
+
+pub fn get_credentials_path() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        dirs::config_dir()
+            .map(|p| p.join("spotiline").join("credentials.toml"))
+            .unwrap_or_else(|| PathBuf::from("credentials.toml"))
+    } else {
+        dirs::config_dir()
+            .map(|p| p.join("spotiline").join("credentials.toml"))
+            .unwrap_or_else(|| PathBuf::from("~/.config/spotiline/credentials.toml"))
+    }
+}
+
+pub fn load_credentials() -> CredentialsConfig {
+    let path = get_credentials_path();
+    if !path.exists() {
+        return CredentialsConfig::default();
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => toml::from_str(&content).unwrap_or_default(),
+        Err(_) => CredentialsConfig::default(),
+    }
+}
+
+pub fn save_credentials(creds: &CredentialsConfig) -> Result<()> {
+    let path = get_credentials_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let content = toml::to_string_pretty(creds)?;
+    std::fs::write(&path, content)?;
+    Ok(())
+}
+
+pub fn load_token_from_config() -> Option<String> {
+    let config = load_config();
+    config.token
+}
+
+pub fn save_token_to_config(token: &str) -> Result<()> {
+    let mut config = load_config();
+    config.token = Some(token.to_string());
+    let path = get_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let content = toml::to_string_pretty(&config)?;
+    std::fs::write(&path, content)?;
+    Ok(())
 }

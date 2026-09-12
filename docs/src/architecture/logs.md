@@ -28,7 +28,14 @@ spotiline daemon start
 ```
 
 ### "Failed to parse redirect URL"
-Ensure you paste the **full URL** from the browser after authorizing, including `http://127.0.0.1:8888/callback?code=...`
+- **Auto-capture mode:** This should not happen. Check firewall settings or allow fallback to manual mode.
+- **Manual mode:** Ensure you paste the **full URL** from the browser after authorizing, including `http://127.0.0.1:8888/callback?code=...`
+
+### "Cannot bind port 8888"
+Port 8888 is already in use by another application. Spotiline will automatically fall back to manual authorization mode.
+
+### "Timeout waiting for authorization"
+Auto-capture times out after 120 seconds. Ensure you click "Agree" on the Spotify authorization page promptly, or follow the manual fallback instructions.
 
 ### Network errors in logs
 Check internet connection. Spotiline requires active connection to Spotify servers.

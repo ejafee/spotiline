@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-09-12
+
+### Added
+- Automatic OAuth callback capture via local HTTP server (no more manual URL paste)
+- Auto-open default browser for authorization
+- 120-second timeout with graceful fallback to manual mode
+- User-friendly success page in browser after authorization
+- Clear error messages and manual fallback instructions
+
+### Fixed
+- Confusing "This site can't be reached" error during OAuth (now auto-captured with success page)
+- Improved manual authorization instructions for edge cases (firewall, port conflict, headless)
+
 ## [1.1.1] - 2026-09-11
 
 ### Fixed
@@ -77,3 +90,5 @@ If you already set up Spotiline, update your Spotify Developer Dashboard:
 - Spotify API credentials (Client ID & Secret)
 
 [1.0.0]: https://github.com/ejafee/spotiline/releases/tag/v1.0.0
+[1.1.1]: https://github.com/ejafee/spotiline/releases/tag/v1.1.1
+[1.1.2]: https://github.com/ejafee/spotiline/releases/tag/v1.1.2

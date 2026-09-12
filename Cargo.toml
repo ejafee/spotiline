@@ -1,6 +1,6 @@
 [package]
 name = "spotiline"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2021"
 authors = ["Muhammad Faeyza Ashira"]
 license = "MIT"
@@ -29,3 +29,4 @@ tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
 dirs = "5.0"
 chrono = "0.4"
+open = "5.0"

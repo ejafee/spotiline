@@ -2,7 +2,113 @@ use crate::daemon::state::TrackInfo;
 use anyhow::Result;
 use rspotify::{model::SearchType, prelude::*, AuthCodeSpotify, Credentials, OAuth};
 use std::collections::HashSet;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
+use tokio::time::{timeout, Duration};
 use tracing::info;
+
+async fn wait_for_oauth_callback(auth_url: &str, timeout_secs: u64) -> Result<String> {
+    let listener = match TcpListener::bind("127.0.0.1:8888").await {
+        Ok(l) => l,
+        Err(e) => {
+            return Err(anyhow::anyhow!("Cannot bind port 8888: {}", e));
+        }
+    };
+
+    println!("🌐 Opening browser to authorize...");
+
+    if let Err(e) = open::that(auth_url) {
+        println!("⚠️  Could not auto-open browser: {}", e);
+        println!("   Please manually open: {}\n", auth_url);
+    }
+
+    println!(
+        "⏳ Waiting for authorization (timeout: {}s)...",
+        timeout_secs
+    );
+
+    let result = timeout(Duration::from_secs(timeout_secs), async {
+        loop {
+            match listener.accept().await {
+                Ok((mut stream, _)) => {
+                    let mut reader = BufReader::new(&mut stream);
+                    let mut request_line = String::new();
+
+                    if reader.read_line(&mut request_line).await.is_ok() {
+                        if let Some(code) = parse_code_from_request(&request_line) {
+                            let response = build_success_html();
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            return Ok(code);
+                        }
+                    }
+
+                    let error_response = build_error_html();
+                    let _ = stream.write_all(error_response.as_bytes()).await;
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Accept error: {}", e));
+                }
+            }
+        }
+    })
+    .await;
+
+    match result {
+        Ok(Ok(code)) => Ok(code),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(anyhow::anyhow!("Timeout waiting for authorization")),
+    }
+}
+
+fn parse_code_from_request(request_line: &str) -> Option<String> {
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let path = parts[1];
+    if !path.starts_with("/callback?") && !path.starts_with("/callback/?") {
+        return None;
+    }
+
+    let query_str = path.split('?').nth(1)?;
+    for param in query_str.split('&') {
+        if let Some(code) = param.strip_prefix("code=") {
+            let code_clean = code.split('&').next().unwrap_or(code);
+            return Some(code_clean.to_string());
+        }
+    }
+
+    None
+}
+
+fn build_success_html() -> String {
+    "HTTP/1.1 200 OK\r\n\
+     Content-Type: text/html; charset=utf-8\r\n\
+     Connection: close\r\n\
+     \r\n\
+     <!DOCTYPE html>\
+     <html><head><title>Spotiline - Authorized</title>\
+     <style>body{font-family:sans-serif;text-align:center;padding:50px;background:#1DB954;color:white}\
+     h1{font-size:3em}p{font-size:1.2em}</style></head>\
+     <body><h1>✓ Authorization Complete!</h1>\
+     <p>You can close this window and return to your terminal.</p>\
+     <p>Spotiline is now connected to Spotify.</p></body></html>"
+        .to_string()
+}
+
+fn build_error_html() -> String {
+    "HTTP/1.1 400 Bad Request\r\n\
+     Content-Type: text/html; charset=utf-8\r\n\
+     Connection: close\r\n\
+     \r\n\
+     <!DOCTYPE html>\
+     <html><head><title>Spotiline - Error</title>\
+     <style>body{font-family:sans-serif;text-align:center;padding:50px;background:#f44336;color:white}</style></head>\
+     <body><h1>✗ Invalid Request</h1>\
+     <p>Please authorize through the correct link.</p></body></html>"
+        .to_string()
+}
 
 pub struct SpotifyApi {
     client: AuthCodeSpotify,
@@ -58,16 +164,35 @@ impl SpotifyApi {
 
         // Perform OAuth flow
         let auth_url = client.get_authorize_url(false)?;
-        println!("\n==> Open this URL in your browser:\n{}\n", auth_url);
-        println!("After authorizing, paste the full redirect URL here:");
 
-        let mut redirect_url = String::new();
-        std::io::stdin().read_line(&mut redirect_url)?;
+        // Try auto-capture first
+        match wait_for_oauth_callback(&auth_url, 120).await {
+            Ok(code) => {
+                println!("✓ Authorization received!");
+                client.request_token(&code).await?;
+            }
+            Err(e) => {
+                println!("\n⚠️  Auto-capture failed: {}", e);
+                println!("\n╔═══════════════════════════════════════════════════════╗");
+                println!("║  Manual Authorization Required                        ║");
+                println!("╚═══════════════════════════════════════════════════════╝\n");
 
-        let code = client
-            .parse_response_code(redirect_url.trim())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse redirect URL"))?;
-        client.request_token(&code).await?;
+                println!("1. Open this URL in your browser:\n   {}\n", auth_url);
+                println!("2. Click 'Agree' to authorize Spotiline");
+                println!("3. Your browser will show 'This site can't be reached' - THIS IS NORMAL");
+                println!("4. Copy the FULL URL from your browser's address bar");
+                println!("   Example: http://127.0.0.1:8888/callback?code=AQBx...\n");
+                println!("5. Paste that URL here:");
+
+                let mut redirect_url = String::new();
+                std::io::stdin().read_line(&mut redirect_url)?;
+
+                let code = client
+                    .parse_response_code(redirect_url.trim())
+                    .ok_or_else(|| anyhow::anyhow!("Failed to parse redirect URL. Ensure you copied the full URL including 'http://127.0.0.1:8888/callback?code=...'"))?;
+                client.request_token(&code).await?;
+            }
+        }
 
         // Save token to keyring
         if let Some(token) = client.token.lock().await.unwrap().as_ref() {
@@ -198,5 +323,42 @@ impl SpotifyApi {
         }
 
         Ok(tracks)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_code_from_valid_request() {
+        let request = "GET /callback?code=AQBx123&state=abc HTTP/1.1";
+        assert_eq!(
+            parse_code_from_request(request),
+            Some("AQBx123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_code_from_trailing_slash_request() {
+        let request = "GET /callback/?code=AQBx123&state=abc HTTP/1.1";
+        assert_eq!(
+            parse_code_from_request(request),
+            Some("AQBx123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_code_from_invalid_request() {
+        assert_eq!(parse_code_from_request("GET / HTTP/1.1"), None);
+        assert_eq!(parse_code_from_request("GET /callback HTTP/1.1"), None);
+        assert_eq!(parse_code_from_request(""), None);
+    }
+
+    #[test]
+    fn test_success_html_contains_headers() {
+        let html = build_success_html();
+        assert!(html.contains("HTTP/1.1 200 OK"));
+        assert!(html.contains("Authorization Complete"));
     }
 }

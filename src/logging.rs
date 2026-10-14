@@ -16,6 +16,12 @@ pub fn init_logging() -> Result<()> {
         .with(fmt::layer().with_writer(file_appender))
         .init();
 
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        tracing::error!("PANIC: {:?}", panic_info);
+        default_hook(panic_info);
+    }));
+
     Ok(())
 }
 

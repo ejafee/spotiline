@@ -32,7 +32,20 @@ async fn handle_navigation_key(app: &mut App, key: KeyEvent) -> Result<bool> {
             app.focus = FocusPane::Tracks;
         }
         KeyCode::Enter => {
-            app.play_selected().await;
+            if app.focus == FocusPane::Playlists {
+                if let Some(i) = app.playlist_state.selected() {
+                    if let Some(p) = app.playlists.get(i) {
+                        let _ = crate::cli::send_command(
+                            app.port,
+                            crate::daemon::state::IPCCommand::PlayContext(p.uri.clone()),
+                        )
+                        .await;
+                        app.tick().await;
+                    }
+                }
+            } else {
+                app.play_selected().await;
+            }
         }
         KeyCode::Left => {
             app.seek(-10).await;
@@ -41,10 +54,10 @@ async fn handle_navigation_key(app: &mut App, key: KeyEvent) -> Result<bool> {
             app.seek(10).await;
         }
         KeyCode::Up => {
-            move_selection_up(app);
+            move_selection_up(app).await;
         }
         KeyCode::Down => {
-            move_selection_down(app);
+            move_selection_down(app).await;
         }
         KeyCode::Tab => {
             app.focus = match app.focus {
@@ -108,12 +121,13 @@ async fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<bool> {
     Ok(false)
 }
 
-fn move_selection_up(app: &mut App) {
+async fn move_selection_up(app: &mut App) {
     match app.focus {
         FocusPane::Playlists => {
             let i = app.playlist_state.selected().unwrap_or(0);
             if i > 0 {
                 app.playlist_state.select(Some(i - 1));
+                app.load_selected_playlist_tracks().await;
             }
         }
         FocusPane::Tracks => {
@@ -125,13 +139,14 @@ fn move_selection_up(app: &mut App) {
     }
 }
 
-fn move_selection_down(app: &mut App) {
+async fn move_selection_down(app: &mut App) {
     match app.focus {
         FocusPane::Playlists => {
             let i = app.playlist_state.selected().unwrap_or(0);
             let len = app.playlists.len();
             if i + 1 < len {
                 app.playlist_state.select(Some(i + 1));
+                app.load_selected_playlist_tracks().await;
             }
         }
         FocusPane::Tracks => {

@@ -1,5 +1,5 @@
 use crate::cli::send_command;
-use crate::daemon::state::{IPCCommand, IPCResponse, TrackInfo};
+use crate::daemon::state::{IPCCommand, IPCResponse, PlaylistInfo, TrackInfo};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -29,7 +29,7 @@ pub struct App {
     pub port: u16,
     pub input_mode: InputMode,
     pub focus: FocusPane,
-    pub playlists: Vec<String>,
+    pub playlists: Vec<PlaylistInfo>,
     pub playlist_state: ListState,
     pub tracks: Vec<TrackInfo>,
     pub track_state: ListState,
@@ -71,7 +71,7 @@ impl App {
             port,
             input_mode: InputMode::Navigation,
             focus: FocusPane::Playlists,
-            playlists: vec!["Liked Songs".to_string(), "Discover Weekly".to_string()],
+            playlists: Vec::new(),
             playlist_state: ListState::default(),
             tracks: Vec::new(),
             track_state: ListState::default(),
@@ -88,9 +88,41 @@ impl App {
             color_bg,
             color_highlight,
         };
-        app.playlist_state.select(Some(0));
+        app.load_playlists().await;
         app.tick().await;
         app
+    }
+
+    pub async fn load_playlists(&mut self) {
+        let cmd = IPCCommand::Playlists { limit: Some(50) };
+        if let Ok(IPCResponse::Playlists(playlists)) = send_command(self.port, cmd).await {
+            self.playlists = playlists;
+            if !self.playlists.is_empty() {
+                self.playlist_state.select(Some(0));
+                self.load_selected_playlist_tracks().await;
+            }
+        }
+    }
+
+    pub async fn load_selected_playlist_tracks(&mut self) {
+        if let Some(selected) = self.playlist_state.selected() {
+            if let Some(playlist) = self.playlists.get(selected) {
+                let cmd = IPCCommand::PlaylistTracks {
+                    playlist: playlist.id.clone(),
+                    limit: Some(50),
+                };
+                if let Ok(IPCResponse::PlaylistTracks { tracks, .. }) =
+                    send_command(self.port, cmd).await
+                {
+                    self.tracks = tracks;
+                    if !self.tracks.is_empty() {
+                        self.track_state.select(Some(0));
+                    } else {
+                        self.track_state.select(None);
+                    }
+                }
+            }
+        }
     }
 
     pub async fn tick(&mut self) {
@@ -263,23 +295,35 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(area);
 
-    let playlist_items: Vec<ListItem> = app
-        .playlists
-        .iter()
-        .map(|p| {
-            ListItem::new(Line::from(Span::styled(
-                p.clone(),
-                Style::default().fg(COLOR_TEXT),
-            )))
-        })
-        .collect();
+    let playlist_items: Vec<ListItem> = if app.playlists.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "Loading playlists...",
+            Style::default().fg(COLOR_DIM),
+        )))]
+    } else {
+        app.playlists
+            .iter()
+            .map(|p| {
+                ListItem::new(Line::from(Span::styled(
+                    format!("{} ({})", p.name, p.total_tracks),
+                    Style::default().fg(COLOR_TEXT),
+                )))
+            })
+            .collect()
+    };
+
+    let playlist_border_color = if app.focus == FocusPane::Playlists {
+        app.color_highlight
+    } else {
+        COLOR_DIM
+    };
 
     let playlists = List::new(playlist_items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Your Library")
-                .border_style(Style::default().fg(COLOR_DIM)),
+                .border_style(Style::default().fg(playlist_border_color)),
         )
         .highlight_style(
             Style::default()
@@ -325,17 +369,28 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
         )))]
     };
 
+    let title_string;
     let title = if !app.search_results.is_empty() {
         "Search Results"
+    } else if let Some(p) = app.playlist_state.selected().and_then(|i| app.playlists.get(i)) {
+        title_string = format!("Playlist: {}", p.name);
+        title_string.as_str()
     } else {
         "Tracks"
     };
+
+    let tracks_border_color = if app.focus == FocusPane::Tracks {
+        app.color_highlight
+    } else {
+        COLOR_DIM
+    };
+
     let tracks = List::new(display_tracks)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .border_style(Style::default().fg(COLOR_DIM)),
+                .border_style(Style::default().fg(tracks_border_color)),
         )
         .highlight_style(
             Style::default()

@@ -50,6 +50,33 @@ pub enum Commands {
     Queue { uri: String },
     /// Get current playback status
     Status,
+    /// View and play Spotify playlists
+    #[command(alias = "playlists")]
+    Playlist {
+        #[command(subcommand)]
+        action: PlaylistAction,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum PlaylistAction {
+    /// List your Spotify playlists
+    List {
+        #[arg(long, default_value = "50")]
+        limit: u32,
+    },
+    /// View songs in a playlist (by name, ID, or URI)
+    Tracks {
+        /// Playlist name, Spotify URI, or ID
+        playlist: String,
+        #[arg(long, default_value = "50")]
+        limit: u32,
+    },
+    /// Play a playlist (by name, ID, or URI)
+    Play {
+        /// Playlist name, Spotify URI, or ID
+        playlist: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -68,12 +95,21 @@ pub async fn send_command(port: u16, command: IPCCommand) -> Result<IPCResponse>
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
 
     let data = bincode::serialize(&command)?;
+    let len_bytes = (data.len() as u32).to_be_bytes();
+    stream.write_all(&len_bytes).await?;
     stream.write_all(&data).await?;
 
-    let mut buf = vec![0u8; 8192];
-    let n = stream.read(&mut buf).await?;
+    let mut resp_len_bytes = [0u8; 4];
+    stream.read_exact(&mut resp_len_bytes).await?;
+    let resp_len = u32::from_be_bytes(resp_len_bytes) as usize;
+    if resp_len > 10 * 1024 * 1024 {
+        return Err(anyhow::anyhow!("Response too large: {} bytes", resp_len));
+    }
 
-    let response: IPCResponse = bincode::deserialize(&buf[..n])?;
+    let mut resp_buf = vec![0u8; resp_len];
+    stream.read_exact(&mut resp_buf).await?;
+
+    let response: IPCResponse = bincode::deserialize(&resp_buf)?;
     Ok(response)
 }
 

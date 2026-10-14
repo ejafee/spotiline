@@ -77,29 +77,19 @@ impl PlayerManager {
                 Ok(Some(playback)) => {
                     let (track_name, artist_name, duration) = match &playback.item {
                         Some(item) => {
-                            use rspotify::model::PlayableItem;
-                            match item {
-                                PlayableItem::Track(t) => {
-                                    let name = t.name.clone();
-                                    let artist = t
-                                        .artists
-                                        .iter()
-                                        .map(|a| a.name.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    let dur = t.duration.num_milliseconds().max(0) as u64;
-                                    (name, artist, dur)
-                                }
-                                PlayableItem::Episode(e) => {
-                                    let name = e.name.clone();
-                                    let artist = e.show.name.clone();
-                                    let dur = e.duration.num_milliseconds().max(0) as u64;
-                                    (name, artist, dur)
-                                }
-                                _ => (String::new(), String::new(), 0),
+                            let (name, artist, _uri, dur) =
+                                SpotifyApi::extract_playable_item_info(item);
+                            (name, artist, dur)
+                        }
+                        None => {
+                            if let Ok(Some(item)) = self.api.get_currently_playing().await {
+                                let (name, artist, _uri, dur) =
+                                    SpotifyApi::extract_playable_item_info(&item);
+                                (name, artist, dur)
+                            } else {
+                                (String::new(), String::new(), 0)
                             }
                         }
-                        None => (String::new(), String::new(), 0),
                     };
 
                     let state = PlaybackState {
@@ -119,7 +109,22 @@ impl PlayerManager {
                     };
                     IPCResponse::State(state)
                 }
-                Ok(None) => IPCResponse::State(PlaybackState::default()),
+                Ok(None) => {
+                    if let Ok(Some(item)) = self.api.get_currently_playing().await {
+                        let (name, artist, _uri, dur) =
+                            SpotifyApi::extract_playable_item_info(&item);
+                        let state = PlaybackState {
+                            state: "playing".to_string(),
+                            track: name,
+                            artist,
+                            progress_ms: 0,
+                            duration_ms: dur,
+                        };
+                        IPCResponse::State(state)
+                    } else {
+                        IPCResponse::State(PlaybackState::default())
+                    }
+                }
                 Err(e) => {
                     error!("Status query failed: {}", e);
                     IPCResponse::Error(e.to_string())
@@ -142,6 +147,39 @@ impl PlayerManager {
                 let mut state = self.state.lock().await;
                 state.state = "playing".to_string();
                 IPCResponse::Ok
+            }
+            IPCCommand::PlayContext(uri) => {
+                if let Err(e) = self.api.play_context(&uri).await {
+                    error!("Play context failed: {}", e);
+                    return IPCResponse::Error(e.to_string());
+                }
+                info!("Playing context: {}", uri);
+                let mut state = self.state.lock().await;
+                state.state = "playing".to_string();
+                IPCResponse::Ok
+            }
+            IPCCommand::Playlists { limit } => {
+                let limit = limit.unwrap_or(50);
+                match self.api.get_user_playlists(limit).await {
+                    Ok(playlists) => IPCResponse::Playlists(playlists),
+                    Err(e) => {
+                        error!("Playlists query failed: {}", e);
+                        IPCResponse::Error(e.to_string())
+                    }
+                }
+            }
+            IPCCommand::PlaylistTracks { playlist, limit } => {
+                let limit = limit.unwrap_or(50);
+                match self.api.get_playlist_tracks(&playlist, limit).await {
+                    Ok((name, tracks)) => IPCResponse::PlaylistTracks {
+                        playlist_name: name,
+                        tracks,
+                    },
+                    Err(e) => {
+                        error!("Playlist tracks failed: {}", e);
+                        IPCResponse::Error(e.to_string())
+                    }
+                }
             }
             IPCCommand::Search {
                 query,

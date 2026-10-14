@@ -1,4 +1,4 @@
-use super::{send_command, Commands, DaemonAction};
+use super::{send_command, Commands, DaemonAction, PlaylistAction};
 use crate::daemon::state::IPCCommand;
 use anyhow::{anyhow, Result};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -43,6 +43,25 @@ pub async fn execute(command: Commands, port: u16, json_mode: bool) -> Result<()
         }
         Commands::Queue { uri } => send_and_print(port, IPCCommand::Queue(uri), json_mode).await,
         Commands::Status => send_and_print(port, IPCCommand::Status, json_mode).await,
+        Commands::Playlist { action } => match action {
+            PlaylistAction::List { limit } => {
+                send_and_print(port, IPCCommand::Playlists { limit: Some(limit) }, json_mode).await
+            }
+            PlaylistAction::Tracks { playlist, limit } => {
+                send_and_print(
+                    port,
+                    IPCCommand::PlaylistTracks {
+                        playlist,
+                        limit: Some(limit),
+                    },
+                    json_mode,
+                )
+                .await
+            }
+            PlaylistAction::Play { playlist } => {
+                send_and_print(port, IPCCommand::PlayContext(playlist), json_mode).await
+            }
+        },
     };
 
     res
@@ -127,6 +146,49 @@ fn print_response(response: crate::daemon::state::IPCResponse, json_mode: bool) 
                 }
             }
         }
+        IPCResponse::Playlists(playlists) => {
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&playlists).unwrap());
+            } else if playlists.is_empty() {
+                println!("No playlists found in your library.");
+            } else {
+                println!("Your Playlists ({}):", playlists.len());
+                for (i, p) in playlists.iter().enumerate() {
+                    println!(
+                        "{}. {} ({} tracks) [Owner: {} | ID: {}]",
+                        i + 1,
+                        p.name,
+                        p.total_tracks,
+                        p.owner,
+                        p.id
+                    );
+                }
+            }
+        }
+        IPCResponse::PlaylistTracks {
+            playlist_name,
+            tracks,
+        } => {
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&tracks).unwrap());
+            } else if tracks.is_empty() {
+                println!("Playlist '{}' has no tracks.", playlist_name);
+            } else {
+                println!("Playlist: {} ({} tracks)", playlist_name, tracks.len());
+                for (i, t) in tracks.iter().enumerate() {
+                    let mins = t.duration_ms / 60000;
+                    let secs = (t.duration_ms % 60000) / 1000;
+                    println!(
+                        "{}. {} - {} ({}:{:02})",
+                        i + 1,
+                        t.name,
+                        t.artist,
+                        mins,
+                        secs
+                    );
+                }
+            }
+        }
         IPCResponse::Error(err) => {
             if json_mode {
                 println!(r#"{{"error":"{}"}}"#, err.replace('"', "\\\""));
@@ -203,15 +265,28 @@ async fn start_daemon(port: u16) -> Result<()> {
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
 
-        let child = ProcessCommand::new(exe)
+        let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB;
+        let child = match ProcessCommand::new(&exe)
             .arg("--daemon-mode")
             .arg(port.to_string())
-            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+            .creation_flags(flags)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn()?;
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => ProcessCommand::new(&exe)
+                .arg("--daemon-mode")
+                .arg(port.to_string())
+                .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()?,
+        };
 
         std::fs::write(&pid_path, child.id().to_string())?;
     }
@@ -479,5 +554,60 @@ mod tests {
         assert!(friendly_error("403 Forbidden").contains("Spotify Premium"));
         assert!(friendly_error("429 Too Many Requests").contains("Rate limited"));
         assert_eq!(friendly_error("Custom error"), "Custom error");
+    }
+
+    #[test]
+    fn test_cli_playlist_parsing() {
+        use crate::cli::Cli;
+        use clap::Parser;
+
+        // spotiline playlist list
+        let cli = Cli::try_parse_from(["spotiline", "playlist", "list"]).unwrap();
+        match cli.command {
+            Some(Commands::Playlist {
+                action: PlaylistAction::List { limit },
+            }) => {
+                assert_eq!(limit, 50);
+            }
+            _ => panic!("Expected PlaylistAction::List"),
+        }
+
+        // spotiline playlist tracks "duar"
+        let cli =
+            Cli::try_parse_from(["spotiline", "playlist", "tracks", "duar", "--limit", "20"])
+                .unwrap();
+        match cli.command {
+            Some(Commands::Playlist {
+                action: PlaylistAction::Tracks { playlist, limit },
+            }) => {
+                assert_eq!(playlist, "duar");
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("Expected PlaylistAction::Tracks"),
+        }
+
+        // spotiline playlist play "duar"
+        let cli = Cli::try_parse_from(["spotiline", "playlist", "play", "duar"]).unwrap();
+        match cli.command {
+            Some(Commands::Playlist {
+                action: PlaylistAction::Play { playlist },
+            }) => {
+                assert_eq!(playlist, "duar");
+            }
+            _ => panic!("Expected PlaylistAction::Play"),
+        }
+
+        // spotiline playlists alias
+        let cli = Cli::try_parse_from(["spotiline", "playlists", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Playlist {
+                action: PlaylistAction::List { .. }
+            })
+        ));
+
+        // global --json
+        let cli = Cli::try_parse_from(["spotiline", "--json", "playlist", "list"]).unwrap();
+        assert!(cli.json);
     }
 }

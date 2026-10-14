@@ -11,6 +11,14 @@ pub enum IPCCommand {
     Status,
     Queue(String),
     PlayUri(String),
+    PlayContext(String),
+    Playlists {
+        limit: Option<u32>,
+    },
+    PlaylistTracks {
+        playlist: String,
+        limit: Option<u32>,
+    },
     Search {
         query: String,
         search_type: Option<String>,
@@ -23,7 +31,21 @@ pub enum IPCResponse {
     Ok,
     State(PlaybackState),
     SearchResults(Vec<TrackInfo>),
+    Playlists(Vec<PlaylistInfo>),
+    PlaylistTracks {
+        playlist_name: String,
+        tracks: Vec<TrackInfo>,
+    },
     Error(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistInfo {
+    pub id: String,
+    pub name: String,
+    pub uri: String,
+    pub total_tracks: u32,
+    pub owner: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

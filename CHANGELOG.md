@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-10-14
+
+### Added
+- **Spotify Playlists Support for CLI & Agents**:
+  - `spotiline playlist list`: List all user playlists with names, IDs, track counts, and visibility.
+  - `spotiline playlist tracks <name|id|uri>`: Inspect tracks in a playlist with track titles, artists, and duration.
+  - `spotiline playlist play <name|id|uri>`: Start immediate playback of a playlist context.
+  - Global `--json` support across all playlist commands for AI agents and script automation.
+- **TUI Real Playlist Browsing**:
+  - Automatically loads user's real Spotify playlists and track counts into the Left Pane on startup.
+  - Dynamically inspects and navigates tracks for the highlighted playlist in the Center Pane.
+  - Pressing `Enter` in the playlists list plays the entire playlist context; pressing `Enter` on a track plays that track.
+  - Added active pane focus indicators (focused pane borders highlighted in accent color, unfocused in muted gray).
+- **Auto Device Fallback**: Automatically targets available open Spotify devices if no device is actively playing when starting playback, eliminating `404 No Active Device` errors when Spotify is open but paused.
+- **Length-Prefixed IPC Framing**: Upgraded daemon-client IPC communication to 4-byte length-prefixed messages, eliminating buffer truncation bugs on large payloads.
+
+### Fixed
+- **Missing Playing Track Title & Artist**: Fixed bug where playing tracks showed empty track title and artist. Spotify Web API removed legacy metadata fields, causing `rspotify` to deserialize tracks as `PlayableItem::Unknown(Value)`. Added robust extraction falling back to raw JSON parsing.
+- **Spotify 403 Forbidden on Playlist Tracks**: Migrated playlist track retrieval from deprecated `/v1/playlists/{id}/tracks` endpoint to `/v1/playlists/{id}/items` (`playlist_items_manual`).
+
 ## [1.2.1] - 2026-10-14
 
 ### Fixed

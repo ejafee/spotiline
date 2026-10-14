@@ -1,4 +1,4 @@
-use crate::daemon::state::TrackInfo;
+use crate::daemon::state::{PlaylistInfo, TrackInfo};
 use anyhow::Result;
 use rspotify::{model::SearchType, prelude::*, AuthCodeSpotify, Credentials, OAuth};
 use std::collections::HashSet;
@@ -367,35 +367,57 @@ impl SpotifyApi {
         Ok(input)
     }
 
+    pub async fn get_target_device_id(&self) -> Option<String> {
+        if let Ok(devices) = self.client.device().await {
+            if let Some(active) = devices.iter().find(|d| d.is_active) {
+                if let Some(id) = &active.id {
+                    return Some(id.clone());
+                }
+            }
+            if let Some(first) = devices.first() {
+                if let Some(id) = &first.id {
+                    return Some(id.clone());
+                }
+            }
+        }
+        None
+    }
+
     pub async fn play(&self) -> Result<()> {
-        self.client.resume_playback(None, None).await?;
+        let dev = self.get_target_device_id().await;
+        self.client.resume_playback(dev.as_deref(), None).await?;
         Ok(())
     }
 
     pub async fn pause(&self) -> Result<()> {
-        self.client.pause_playback(None).await?;
+        let dev = self.get_target_device_id().await;
+        self.client.pause_playback(dev.as_deref()).await?;
         Ok(())
     }
 
     pub async fn next(&self) -> Result<()> {
-        self.client.next_track(None).await?;
+        let dev = self.get_target_device_id().await;
+        self.client.next_track(dev.as_deref()).await?;
         Ok(())
     }
 
     pub async fn previous(&self) -> Result<()> {
-        self.client.previous_track(None).await?;
+        let dev = self.get_target_device_id().await;
+        self.client.previous_track(dev.as_deref()).await?;
         Ok(())
     }
 
     pub async fn seek(&self, position_ms: u32) -> Result<()> {
         use chrono::TimeDelta;
         let delta = TimeDelta::milliseconds(position_ms as i64);
-        self.client.seek_track(delta, None).await?;
+        let dev = self.get_target_device_id().await;
+        self.client.seek_track(delta, dev.as_deref()).await?;
         Ok(())
     }
 
     pub async fn set_volume(&self, volume: u8) -> Result<()> {
-        self.client.volume(volume, None).await?;
+        let dev = self.get_target_device_id().await;
+        self.client.volume(volume, dev.as_deref()).await?;
         Ok(())
     }
 
@@ -408,8 +430,9 @@ impl SpotifyApi {
     pub async fn add_to_queue(&self, uri: &str) -> Result<()> {
         use rspotify::model::{PlayableId, TrackId};
         let track_id = TrackId::from_id_or_uri(uri)?;
+        let dev = self.get_target_device_id().await;
         self.client
-            .add_item_to_queue(PlayableId::Track(track_id), None)
+            .add_item_to_queue(PlayableId::Track(track_id), dev.as_deref())
             .await?;
         Ok(())
     }
@@ -417,8 +440,176 @@ impl SpotifyApi {
     pub async fn play_uri(&self, uri: &str) -> Result<()> {
         use rspotify::model::{PlayableId, TrackId};
         let track_id = TrackId::from_id_or_uri(uri)?;
+        let dev = self.get_target_device_id().await;
         self.client
-            .start_uris_playback([PlayableId::Track(track_id)], None, None, None)
+            .start_uris_playback([PlayableId::Track(track_id)], dev.as_deref(), None, None)
+            .await?;
+        Ok(())
+    }
+
+    pub fn extract_playable_item_info(
+        item: &rspotify::model::PlayableItem,
+    ) -> (String, String, String, u64) {
+        use rspotify::model::PlayableItem;
+        match item {
+            PlayableItem::Track(t) => {
+                let name = t.name.clone();
+                let artist = t
+                    .artists
+                    .iter()
+                    .map(|a| a.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let uri = t
+                    .id
+                    .as_ref()
+                    .map(|id| format!("spotify:track:{}", id.id()))
+                    .unwrap_or_default();
+                let dur = t.duration.num_milliseconds().max(0) as u64;
+                (name, artist, uri, dur)
+            }
+            PlayableItem::Episode(e) => {
+                let name = e.name.clone();
+                let artist = e.show.name.clone();
+                let uri = format!("spotify:episode:{}", e.id.id());
+                let dur = e.duration.num_milliseconds().max(0) as u64;
+                (name, artist, uri, dur)
+            }
+            PlayableItem::Unknown(val) => {
+                let name = val
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let artist = if let Some(artists) = val.get("artists").and_then(|a| a.as_array()) {
+                    artists
+                        .iter()
+                        .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                } else if let Some(show) = val.get("show").and_then(|s| s.get("name")).and_then(|n| n.as_str()) {
+                    show.to_string()
+                } else {
+                    String::new()
+                };
+                let uri = val
+                    .get("uri")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let dur = val.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
+                (name, artist, uri, dur)
+            }
+        }
+    }
+
+    pub async fn get_currently_playing(&self) -> Result<Option<rspotify::model::PlayableItem>> {
+        let ctx = self.client.current_user_playing_item().await?;
+        Ok(ctx.and_then(|c| c.item))
+    }
+
+    pub async fn get_user_playlists(&self, limit: u32) -> Result<Vec<PlaylistInfo>> {
+        let page = self
+            .client
+            .current_user_playlists_manual(Some(limit), None)
+            .await?;
+        let mut result = Vec::new();
+        for p in page.items {
+            result.push(PlaylistInfo {
+                id: p.id.id().to_string(),
+                name: p.name,
+                uri: format!("spotify:playlist:{}", p.id.id()),
+                total_tracks: p.items.total,
+                owner: p
+                    .owner
+                    .display_name
+                    .unwrap_or_else(|| p.owner.id.id().to_string()),
+            });
+        }
+        Ok(result)
+    }
+
+    pub async fn get_playlist_tracks(
+        &self,
+        playlist_id_or_name: &str,
+        limit: u32,
+    ) -> Result<(String, Vec<TrackInfo>)> {
+        use rspotify::model::PlaylistId;
+
+        let trimmed = playlist_id_or_name.trim();
+        let (playlist_id, playlist_name) = if let Ok(id) = PlaylistId::from_id_or_uri(trimmed) {
+            let static_id = id.into_static();
+            let id_str = static_id.id().to_string();
+            let name = match self.client.playlist(static_id.clone(), None, None).await {
+                Ok(p) => p.name,
+                Err(_) => id_str,
+            };
+            (static_id, name)
+        } else {
+            let user_playlists = self.get_user_playlists(50).await?;
+            let target = trimmed.to_lowercase();
+            let matched = user_playlists
+                .into_iter()
+                .find(|p| p.name.to_lowercase() == target || p.id == trimmed);
+            if let Some(p) = matched {
+                let id = PlaylistId::from_id(&p.id)?.into_static();
+                (id, p.name)
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Playlist '{}' not found in your library.",
+                    playlist_id_or_name
+                ));
+            }
+        };
+
+        let page = self
+            .client
+            .playlist_items_manual(playlist_id, None, None, Some(limit), None)
+            .await?;
+
+        let mut tracks = Vec::new();
+        for item in page.items {
+            if let Some(playable) = item.item {
+                let (name, artist, uri, duration_ms) = Self::extract_playable_item_info(&playable);
+                if !name.is_empty() {
+                    tracks.push(TrackInfo {
+                        name,
+                        artist,
+                        uri,
+                        duration_ms,
+                    });
+                }
+            }
+        }
+
+        Ok((playlist_name, tracks))
+    }
+
+    pub async fn play_context(&self, uri_or_name: &str) -> Result<()> {
+        use rspotify::model::{PlayContextId, PlaylistId};
+
+        let trimmed = uri_or_name.trim();
+        let playlist_id = if let Ok(id) = PlaylistId::from_id_or_uri(trimmed) {
+            id.into_static()
+        } else {
+            let user_playlists = self.get_user_playlists(50).await?;
+            let target = trimmed.to_lowercase();
+            let matched = user_playlists
+                .into_iter()
+                .find(|p| p.name.to_lowercase() == target || p.id == trimmed);
+            if let Some(p) = matched {
+                PlaylistId::from_id(&p.id)?.into_static()
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Playlist '{}' not found in your library.",
+                    uri_or_name
+                ));
+            }
+        };
+
+        let context_id = PlayContextId::Playlist(playlist_id);
+        self.client
+            .start_context_playback(context_id, None, None, None)
             .await?;
         Ok(())
     }
@@ -545,5 +736,63 @@ mod tests {
         let html = build_success_html();
         assert!(html.contains("HTTP/1.1 200 OK"));
         assert!(html.contains("Authorization Complete"));
+    }
+
+    #[test]
+    fn test_extract_playable_item_info_unknown_track() {
+        use rspotify::model::PlayableItem;
+        let json = serde_json::json!({
+            "name": "Gee",
+            "artists": [
+                {"name": "Girls' Generation"}
+            ],
+            "duration_ms": 201160,
+            "uri": "spotify:track:0t7kjpVLgOYITrSfFCoBEA"
+        });
+        let item = PlayableItem::Unknown(json);
+        let (name, artist, uri, duration) = SpotifyApi::extract_playable_item_info(&item);
+        assert_eq!(name, "Gee");
+        assert_eq!(artist, "Girls' Generation");
+        assert_eq!(uri, "spotify:track:0t7kjpVLgOYITrSfFCoBEA");
+        assert_eq!(duration, 201160);
+    }
+
+    #[test]
+    fn test_extract_playable_item_info_multiple_artists() {
+        use rspotify::model::PlayableItem;
+        let json = serde_json::json!({
+            "name": "Under Pressure",
+            "artists": [
+                {"name": "Queen"},
+                {"name": "David Bowie"}
+            ],
+            "duration_ms": 248000,
+            "uri": "spotify:track:abc123"
+        });
+        let item = PlayableItem::Unknown(json);
+        let (name, artist, uri, duration) = SpotifyApi::extract_playable_item_info(&item);
+        assert_eq!(name, "Under Pressure");
+        assert_eq!(artist, "Queen, David Bowie");
+        assert_eq!(uri, "spotify:track:abc123");
+        assert_eq!(duration, 248000);
+    }
+
+    #[test]
+    fn test_extract_playable_item_info_unknown_episode() {
+        use rspotify::model::PlayableItem;
+        let json = serde_json::json!({
+            "name": "Rust in Production",
+            "show": {
+                "name": "Software Engineering Daily"
+            },
+            "duration_ms": 1800000,
+            "uri": "spotify:episode:ep123"
+        });
+        let item = PlayableItem::Unknown(json);
+        let (name, artist, uri, duration) = SpotifyApi::extract_playable_item_info(&item);
+        assert_eq!(name, "Rust in Production");
+        assert_eq!(artist, "Software Engineering Daily");
+        assert_eq!(uri, "spotify:episode:ep123");
+        assert_eq!(duration, 1800000);
     }
 }

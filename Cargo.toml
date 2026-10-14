@@ -1,6 +1,6 @@
 [package]
 name = "spotiline"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 authors = ["Muhammad Faeyza Ashira"]
 license = "MIT"
@@ -24,9 +24,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 anyhow = "1.0"
-tokio-serde = { version = "0.9", features = ["bincode"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-futures = "0.3"
 dirs = "5.0"
 chrono = "0.4"
 open = "5.0"

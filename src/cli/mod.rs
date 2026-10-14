@@ -11,6 +11,10 @@ use tokio::net::TcpStream;
 #[command(version)]
 #[command(about = "Headless Spotify client for terminal users and AI agents", long_about = None)]
 pub struct Cli {
+    /// Format output as JSON (for agents and scripting)
+    #[arg(long, global = true)]
+    pub json: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -45,10 +49,7 @@ pub enum Commands {
     /// Add track to queue
     Queue { uri: String },
     /// Get current playback status
-    Status {
-        #[arg(long)]
-        json: bool,
-    },
+    Status,
 }
 
 #[derive(Subcommand)]

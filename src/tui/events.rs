@@ -7,6 +7,14 @@ pub async fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool> {
         return Ok(false);
     }
 
+    if key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL)
+        && key.code == KeyCode::Char('c')
+    {
+        return Ok(true);
+    }
+
     match app.input_mode {
         InputMode::Navigation => handle_navigation_key(app, key).await,
         InputMode::Search => handle_search_key(app, key).await,
@@ -21,6 +29,7 @@ async fn handle_navigation_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('/') => {
             app.input_mode = InputMode::Search;
+            app.focus = FocusPane::Tracks;
         }
         KeyCode::Enter => {
             app.play_selected().await;
@@ -60,8 +69,13 @@ async fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<bool> {
             app.input_mode = InputMode::Navigation;
             app.search_input.clear();
             app.search_results.clear();
+            app.search_dirty = false;
         }
         KeyCode::Enter => {
+            if app.search_dirty {
+                app.search_dirty = false;
+                app.live_search().await;
+            }
             app.input_mode = InputMode::Navigation;
             if !app.search_results.is_empty() {
                 app.play_selected().await;
@@ -69,17 +83,25 @@ async fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Backspace => {
             app.search_input.pop();
-            app.live_search().await;
+            app.search_dirty = true;
+            app.last_search_edit = Some(std::time::Instant::now());
         }
         KeyCode::Char(c) => {
             app.search_input.push(c);
-            app.live_search().await;
+            app.search_dirty = true;
+            app.last_search_edit = Some(std::time::Instant::now());
         }
         KeyCode::Up => {
-            move_selection_up(app);
+            let i = app.track_state.selected().unwrap_or(0);
+            if i > 0 {
+                app.track_state.select(Some(i - 1));
+            }
         }
         KeyCode::Down => {
-            move_selection_down(app);
+            let i = app.track_state.selected().unwrap_or(0);
+            if i + 1 < app.search_results.len() {
+                app.track_state.select(Some(i + 1));
+            }
         }
         _ => {}
     }

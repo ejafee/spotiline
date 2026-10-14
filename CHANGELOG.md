@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-10-14
+
+### Fixed
+- **TUI Playback Header Border Collision**: Fixed track title and artist clipping into the top block border by properly splitting the inner area (`block.inner(area)`).
+- **TUI Empty Track State**: Friendly placeholder message displayed when playback is stopped/idle instead of an empty playback header.
+- **TUI Search Input Lag**: Added a 250ms debouncer to live search, preventing synchronous network calls on every keystroke and eliminating UI freezes.
+- **TUI Search Results Navigation**: Fixed Up/Down arrow keys in search mode to directly navigate the search results list rather than manipulating the inactive playlists pane.
+- **Immediate Playback on Selection**: Added `IPCCommand::PlayUri` so selecting a track immediately plays it via Spotify API (`start_uris_playback`) instead of merely queueing it to the end.
+- **Windows Dead Process Lockout**: Fixed broken `tasklist` check that erroneously evaluated dead PIDs as running processes due to stdout length checks, permanently blocking restarts.
+- **Non-Track Search Types**: Added full support for parsing `SearchResult::Albums`, `SearchResult::Artists`, and `SearchResult::Playlists` in `spotiline search --type <type>`.
+- **CLI Global `--json` Flag**: Added `--json` as a top-level global flag so all subcommands (`search`, `play`, `pause`, `status`, etc.) cleanly support machine-readable JSON for autonomous agents.
+- **CLI Error Exit Codes**: Commands that fail on the daemon side (e.g. 404 No Active Device, 403 Forbidden) now exit with non-zero exit code `1` instead of `0`.
+- **Friendly Spotify Error Messages**: Mapped raw HTTP 404/403/429 errors to clear, actionable guidance (e.g. prompt to open Spotify on a device when no active player is found).
+- **Dynamic Theme Customization**: TUI now respects custom `color_bg` and `color_highlight` hex values from `config.toml`.
+- **Panic Hook**: Added graceful terminal panic hook restoring raw mode, cursor visibility, and leaving alternate screen.
+
+### Changed
+- Removed unused dependencies `tokio-serde`, `tokio-util`, and `futures` from `Cargo.toml`.
+- Joined all contributing artist names in track status displays instead of only the first artist.
+
 ## [1.2.0] - 2026-09-12
 
 ### Fixed

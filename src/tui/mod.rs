@@ -16,6 +16,14 @@ use tracing::{error, info};
 pub async fn run_tui(port: u16) -> Result<()> {
     ensure_daemon_running(port).await?;
 
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+        default_hook(info);
+    }));
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -90,6 +98,8 @@ where
         while let Ok(state) = status_rx.try_recv() {
             app.apply_state(state);
         }
+
+        app.check_debounced_search().await;
 
         terminal.draw(|f| ui::render(f, app))?;
 

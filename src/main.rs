@@ -7,7 +7,7 @@ mod tui;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::Cli;
 use tracing::error;
 
 #[tokio::main]
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
             }
         }
         Some(cmd) => {
-            let json_mode = matches!(&cmd, Commands::Status { json: true });
+            let json_mode = cli.json;
             if let Err(e) = cli::handle_cli_command(cmd, config.port, json_mode).await {
                 error!("CLI command failed: {}", e);
                 if json_mode {

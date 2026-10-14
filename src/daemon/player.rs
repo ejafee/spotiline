@@ -83,16 +83,17 @@ impl PlayerManager {
                                     let name = t.name.clone();
                                     let artist = t
                                         .artists
-                                        .first()
-                                        .map(|a| a.name.clone())
-                                        .unwrap_or_default();
-                                    let dur = t.duration.num_milliseconds() as u64;
+                                        .iter()
+                                        .map(|a| a.name.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    let dur = t.duration.num_milliseconds().max(0) as u64;
                                     (name, artist, dur)
                                 }
                                 PlayableItem::Episode(e) => {
                                     let name = e.name.clone();
                                     let artist = e.show.name.clone();
-                                    let dur = e.duration.num_milliseconds() as u64;
+                                    let dur = e.duration.num_milliseconds().max(0) as u64;
                                     (name, artist, dur)
                                 }
                                 _ => (String::new(), String::new(), 0),
@@ -112,7 +113,7 @@ impl PlayerManager {
                         artist: artist_name,
                         progress_ms: playback
                             .progress
-                            .map(|d| d.num_milliseconds() as u64)
+                            .map(|d| d.num_milliseconds().max(0) as u64)
                             .unwrap_or(0),
                         duration_ms: duration,
                     };
@@ -130,6 +131,16 @@ impl PlayerManager {
                     return IPCResponse::Error(e.to_string());
                 }
                 info!("Added to queue: {}", uri);
+                IPCResponse::Ok
+            }
+            IPCCommand::PlayUri(uri) => {
+                if let Err(e) = self.api.play_uri(&uri).await {
+                    error!("Play URI failed: {}", e);
+                    return IPCResponse::Error(e.to_string());
+                }
+                info!("Playing URI: {}", uri);
+                let mut state = self.state.lock().await;
+                state.state = "playing".to_string();
                 IPCResponse::Ok
             }
             IPCCommand::Search {

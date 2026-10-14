@@ -438,22 +438,73 @@ impl SpotifyApi {
 
         let mut tracks = Vec::new();
 
-        if let rspotify::model::SearchResult::Tracks(track_page) = results {
-            for track in track_page.items {
-                tracks.push(TrackInfo {
-                    name: track.name.clone(),
-                    artist: track
-                        .artists
-                        .first()
-                        .map(|a| a.name.clone())
-                        .unwrap_or_default(),
-                    uri: track
-                        .id
-                        .map(|id| format!("spotify:track:{}", id.id()))
-                        .unwrap_or_default(),
-                    duration_ms: track.duration.num_milliseconds() as u64,
-                });
+        match results {
+            rspotify::model::SearchResult::Tracks(track_page) => {
+                for track in track_page.items {
+                    tracks.push(TrackInfo {
+                        name: track.name.clone(),
+                        artist: track
+                            .artists
+                            .iter()
+                            .map(|a| a.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        uri: track
+                            .id
+                            .map(|id| format!("spotify:track:{}", id.id()))
+                            .unwrap_or_default(),
+                        duration_ms: track.duration.num_milliseconds().max(0) as u64,
+                    });
+                }
             }
+            rspotify::model::SearchResult::Albums(album_page) => {
+                for album in album_page.items {
+                    let artist = album
+                        .artists
+                        .iter()
+                        .map(|a| a.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    tracks.push(TrackInfo {
+                        name: album.name,
+                        artist: if artist.is_empty() {
+                            "Album".to_string()
+                        } else {
+                            format!("Album • {}", artist)
+                        },
+                        uri: album
+                            .id
+                            .map(|id| format!("spotify:album:{}", id.id()))
+                            .unwrap_or_default(),
+                        duration_ms: 0,
+                    });
+                }
+            }
+            rspotify::model::SearchResult::Artists(artist_page) => {
+                for artist in artist_page.items {
+                    tracks.push(TrackInfo {
+                        name: artist.name,
+                        artist: "Artist".to_string(),
+                        uri: format!("spotify:artist:{}", artist.id.id()),
+                        duration_ms: 0,
+                    });
+                }
+            }
+            rspotify::model::SearchResult::Playlists(playlist_page) => {
+                for playlist in playlist_page.items {
+                    let owner = playlist
+                        .owner
+                        .display_name
+                        .unwrap_or_else(|| "Spotify".to_string());
+                    tracks.push(TrackInfo {
+                        name: playlist.name,
+                        artist: format!("Playlist • by {}", owner),
+                        uri: format!("spotify:playlist:{}", playlist.id.id()),
+                        duration_ms: 0,
+                    });
+                }
+            }
+            _ => {}
         }
 
         Ok(tracks)

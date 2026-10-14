@@ -35,16 +35,38 @@ pub struct App {
     pub track_state: ListState,
     pub search_input: String,
     pub search_results: Vec<TrackInfo>,
+    pub search_dirty: bool,
+    pub last_search_edit: Option<std::time::Instant>,
     pub current_track: String,
     pub current_artist: String,
     pub is_playing: bool,
     pub progress_ms: u64,
     pub duration_ms: u64,
     pub status_msg: String,
+    pub color_bg: Color,
+    pub color_highlight: Color,
+}
+
+fn parse_hex_color(hex: &str, default: Color) -> Color {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() == 6 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&hex[0..2], 16),
+            u8::from_str_radix(&hex[2..4], 16),
+            u8::from_str_radix(&hex[4..6], 16),
+        ) {
+            return Color::Rgb(r, g, b);
+        }
+    }
+    default
 }
 
 impl App {
     pub async fn new(port: u16) -> Self {
+        let config = crate::config::load_config();
+        let color_bg = parse_hex_color(&config.ui.color_bg, COLOR_BG);
+        let color_highlight = parse_hex_color(&config.ui.color_highlight, COLOR_HIGHLIGHT);
+
         let mut app = Self {
             port,
             input_mode: InputMode::Navigation,
@@ -55,12 +77,16 @@ impl App {
             track_state: ListState::default(),
             search_input: String::new(),
             search_results: Vec::new(),
+            search_dirty: false,
+            last_search_edit: None,
             current_track: String::new(),
             current_artist: String::new(),
             is_playing: false,
             progress_ms: 0,
             duration_ms: 0,
             status_msg: "Daemon Active".to_string(),
+            color_bg,
+            color_highlight,
         };
         app.playlist_state.select(Some(0));
         app.tick().await;
@@ -110,8 +136,19 @@ impl App {
         self.tick().await;
     }
 
+    pub async fn check_debounced_search(&mut self) {
+        if self.search_dirty {
+            if let Some(last_edit) = self.last_search_edit {
+                if last_edit.elapsed() >= std::time::Duration::from_millis(250) {
+                    self.search_dirty = false;
+                    self.live_search().await;
+                }
+            }
+        }
+    }
+
     pub async fn live_search(&mut self) {
-        if self.search_input.is_empty() {
+        if self.search_input.trim().is_empty() {
             self.search_results.clear();
             return;
         }
@@ -141,8 +178,7 @@ impl App {
 
         if let Some(track) = track {
             let uri = track.uri.clone();
-            let _ = send_command(self.port, IPCCommand::Queue(uri)).await;
-            let _ = send_command(self.port, IPCCommand::Play).await;
+            let _ = send_command(self.port, IPCCommand::PlayUri(uri)).await;
             self.tick().await;
         }
     }
@@ -178,14 +214,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let status_color = if app.is_playing {
-        COLOR_HIGHLIGHT
+        app.color_highlight
     } else {
         COLOR_DIM
     };
 
     let search_style = if app.input_mode == InputMode::Search {
         Style::default()
-            .fg(COLOR_HIGHLIGHT)
+            .fg(app.color_highlight)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(COLOR_DIM)
@@ -201,7 +237,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "🟢 Spotiline  ",
             Style::default()
-                .fg(COLOR_HIGHLIGHT)
+                .fg(app.color_highlight)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("| Mode: TUI ", Style::default().fg(COLOR_TEXT)),
@@ -214,8 +250,8 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(COLOR_HIGHLIGHT))
-        .style(Style::default().bg(COLOR_BG));
+        .border_style(Style::default().fg(app.color_highlight))
+        .style(Style::default().bg(app.color_bg));
 
     let paragraph = Paragraph::new(line).block(block);
     frame.render_widget(paragraph, area);
@@ -247,7 +283,7 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_style(
             Style::default()
-                .fg(COLOR_HIGHLIGHT)
+                .fg(app.color_highlight)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
@@ -284,7 +320,7 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
             .collect()
     } else {
         vec![ListItem::new(Line::from(Span::styled(
-            "Press / to search",
+            "Press / to search for songs, artists, or albums",
             Style::default().fg(COLOR_DIM),
         )))]
     };
@@ -303,7 +339,7 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_style(
             Style::default()
-                .fg(COLOR_HIGHLIGHT)
+                .fg(app.color_highlight)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
@@ -312,11 +348,22 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_playback(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.color_highlight))
+        .style(Style::default().bg(app.color_bg));
+    let inner_area = block.inner(area);
+    frame.render_widget(block, area);
+
     let play_icon = if app.is_playing { "⏸ " } else { "▶ " };
-    let track_info = format!(
-        "{}{} - {}",
-        play_icon, app.current_track, app.current_artist
-    );
+    let track_info = if app.current_track.is_empty() {
+        "No track playing  •  Press / to search, Space to play/pause".to_string()
+    } else {
+        format!(
+            "{}{} - {}",
+            play_icon, app.current_track, app.current_artist
+        )
+    };
 
     let progress_text = format!(
         "{} / {}",
@@ -331,7 +378,7 @@ fn render_playback(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .split(area);
+        .split(inner_area);
 
     let info = Paragraph::new(Line::from(Span::styled(
         track_info,
@@ -341,19 +388,46 @@ fn render_playback(frame: &mut Frame, app: &App, area: Rect) {
 
     let gauge = Gauge::default()
         .block(Block::default())
-        .gauge_style(Style::default().fg(COLOR_HIGHLIGHT).bg(COLOR_BG))
+        .gauge_style(Style::default().fg(app.color_highlight).bg(app.color_bg))
         .ratio(app.progress_ratio())
         .label(progress_text);
     frame.render_widget(gauge, chunks[1]);
 
     let help = Paragraph::new(Line::from(vec![Span::styled(
-        "Space: Play/Pause | ←/→: Seek | Enter: Play | /: Search | q: Quit",
+        "Space: Play/Pause | ←/→: Seek 10s | Enter: Play | /: Search | Tab: Focus | q: Quit",
         Style::default().fg(COLOR_DIM),
     )]));
     frame.render_widget(help, chunks[2]);
+}
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(COLOR_HIGHLIGHT));
-    frame.render_widget(block, area);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_hex_color_valid() {
+        assert_eq!(
+            parse_hex_color("#1DB954", Color::White),
+            Color::Rgb(29, 185, 84)
+        );
+        assert_eq!(
+            parse_hex_color("1DB954", Color::White),
+            Color::Rgb(29, 185, 84)
+        );
+        assert_eq!(
+            parse_hex_color("#000000", Color::White),
+            Color::Rgb(0, 0, 0)
+        );
+        assert_eq!(
+            parse_hex_color("#FFFFFF", Color::Black),
+            Color::Rgb(255, 255, 255)
+        );
+    }
+
+    #[test]
+    fn test_parse_hex_color_invalid() {
+        assert_eq!(parse_hex_color("invalid", Color::White), Color::White);
+        assert_eq!(parse_hex_color("", Color::Black), Color::Black);
+        assert_eq!(parse_hex_color("#12345", Color::Red), Color::Red);
+    }
 }

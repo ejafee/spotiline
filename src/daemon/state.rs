@@ -10,6 +10,7 @@ pub enum IPCCommand {
     Volume(u8),
     Status,
     Queue(String),
+    PlayUri(String),
     Search {
         query: String,
         search_type: Option<String>,

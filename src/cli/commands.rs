@@ -42,9 +42,7 @@ pub async fn execute(command: Commands, port: u16, json_mode: bool) -> Result<()
             .await
         }
         Commands::Queue { uri } => send_and_print(port, IPCCommand::Queue(uri), json_mode).await,
-        Commands::Status { json } => {
-            send_and_print(port, IPCCommand::Status, json || json_mode).await
-        }
+        Commands::Status => send_and_print(port, IPCCommand::Status, json_mode).await,
     };
 
     res
@@ -52,6 +50,15 @@ pub async fn execute(command: Commands, port: u16, json_mode: bool) -> Result<()
 
 async fn send_and_print(port: u16, cmd: IPCCommand, json_mode: bool) -> Result<()> {
     match send_command(port, cmd).await {
+        Ok(crate::daemon::state::IPCResponse::Error(err)) => {
+            let user_msg = friendly_error(&err);
+            if json_mode {
+                println!(r#"{{"error":"{}"}}"#, user_msg.replace('"', "\\\""));
+            } else {
+                eprintln!("✗ Error: {}", user_msg);
+            }
+            std::process::exit(1);
+        }
         Ok(resp) => {
             print_response(resp, json_mode);
             Ok(())
@@ -66,6 +73,18 @@ async fn send_and_print(port: u16, cmd: IPCCommand, json_mode: bool) -> Result<(
                 Err(e)
             }
         }
+    }
+}
+
+fn friendly_error(err: &str) -> String {
+    if err.contains("404") || err.contains("NO_ACTIVE_DEVICE") {
+        "No active Spotify device found. Please start playback on your phone, desktop, or web player first.".to_string()
+    } else if err.contains("403") {
+        "Action forbidden. A Spotify Premium account is required for playback control.".to_string()
+    } else if err.contains("429") {
+        "Rate limited by Spotify API. Please wait a moment and try again.".to_string()
+    } else {
+        err.to_string()
     }
 }
 
@@ -127,6 +146,29 @@ async fn preflight_auth_check() -> Result<()> {
     Ok(())
 }
 
+fn is_process_running(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        ProcessCommand::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .output()
+            .map(|o| {
+                let out = String::from_utf8_lossy(&o.stdout);
+                !out.is_empty() && !out.contains("INFO: No tasks") && out.contains(&pid.to_string())
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(unix)]
+    {
+        ProcessCommand::new("ps")
+            .args(["-p", &pid.to_string()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+}
+
 async fn start_daemon(port: u16) -> Result<()> {
     // Pre-flight authentication check (runs in foreground, shows prompts)
     preflight_auth_check().await?;
@@ -136,20 +178,7 @@ async fn start_daemon(port: u16) -> Result<()> {
     if pid_path.exists() {
         let pid_str = std::fs::read_to_string(&pid_path)?;
         if let Ok(pid) = pid_str.trim().parse::<u32>() {
-            // Check if process actually running
-            #[cfg(windows)]
-            let running = ProcessCommand::new("tasklist")
-                .args(["/FI", &format!("PID eq {}", pid), "/NH"])
-                .output()
-                .map(|o| !o.stdout.is_empty() && o.stdout.len() > 10)
-                .unwrap_or(false);
-
-            #[cfg(unix)]
-            let running = ProcessCommand::new("ps")
-                .args(["-p", &pid.to_string()])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            let running = is_process_running(pid);
 
             if running {
                 return Err(anyhow!(
@@ -271,19 +300,7 @@ async fn daemon_status(port: u16) -> Result<()> {
     let pid: u32 = pid_str.trim().parse()?;
 
     // Check if process running
-    #[cfg(windows)]
-    let running = ProcessCommand::new("tasklist")
-        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
-        .output()
-        .map(|o| !o.stdout.is_empty() && o.stdout.len() > 10)
-        .unwrap_or(false);
-
-    #[cfg(unix)]
-    let running = ProcessCommand::new("ps")
-        .args(["-p", &pid.to_string()])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let running = is_process_running(pid);
 
     if !running {
         println!("Status: Dead (PID file exists but process not found)");
@@ -299,7 +316,23 @@ async fn daemon_status(port: u16) -> Result<()> {
 
             // Show log location
             if let Ok(log_dir) = get_log_dir() {
-                println!("Logs: {}", log_dir.join("spotiline.log").display());
+                let log_file = std::fs::read_dir(&log_dir)
+                    .ok()
+                    .and_then(|entries| {
+                        let mut logs: Vec<_> = entries
+                            .filter_map(|e| e.ok())
+                            .map(|e| e.path())
+                            .filter(|p| {
+                                p.file_name()
+                                    .map(|n| n.to_string_lossy().starts_with("spotiline.log"))
+                                    .unwrap_or(false)
+                            })
+                            .collect();
+                        logs.sort();
+                        logs.pop()
+                    })
+                    .unwrap_or_else(|| log_dir.join("spotiline.log"));
+                println!("Logs: {}", log_file.display());
             }
         }
         Err(_) => {
@@ -423,4 +456,28 @@ fn get_pid_path() -> Result<std::path::PathBuf> {
 
     std::fs::create_dir_all(&state_dir)?;
     Ok(state_dir.join("daemon.pid"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_process_running_current() {
+        assert!(is_process_running(std::process::id()));
+    }
+
+    #[test]
+    fn test_is_process_running_dead() {
+        assert!(!is_process_running(999_999_999));
+    }
+
+    #[test]
+    fn test_friendly_error() {
+        assert!(friendly_error("http error: status code 404 Not Found")
+            .contains("No active Spotify device"));
+        assert!(friendly_error("403 Forbidden").contains("Spotify Premium"));
+        assert!(friendly_error("429 Too Many Requests").contains("Rate limited"));
+        assert_eq!(friendly_error("Custom error"), "Custom error");
+    }
 }
